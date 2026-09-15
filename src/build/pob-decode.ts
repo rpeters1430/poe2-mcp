@@ -119,9 +119,11 @@ function stripMarkdownFences(input: string): string {
 /**
  * Auto-detects whether `input` is:
  * 1. Raw build XML (starts with '<')
- * 2. A local file path on disk
- * 3. A pobb.in or pastebin URL (fetched automatically)
- * 4. A base64 Deflate share code needing decode
+ * 2. An approved pobb.in, pastebin.com, or poe.ninja URL
+ * 3. A base64 Deflate share code needing decode
+ *
+ * Local file paths are deliberately handled by readPobBuildFile after the
+ * caller supplies the separate filePath argument.
  */
 export async function resolvePobXml(input: string, depth = 0): Promise<string> {
   if (depth > MAX_RESOLUTION_DEPTH) {

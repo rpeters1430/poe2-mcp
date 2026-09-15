@@ -1,7 +1,7 @@
 import type { InventoryItem, InventorySnapshot, OffenseStats, WeaponOffense } from "../types.js";
 import { parseMods, sumStat } from "./mod-parser.js";
 import { propertyNumber, propertyRange } from "./item-properties.js";
-import { isActiveWeaponSlot } from "./slots.js";
+import { contributesToActiveCharacter, isActiveWeaponSlot } from "./slots.js";
 const ELEMENTAL_DAMAGE_PROPERTIES = ["Fire Damage", "Cold Damage", "Lightning Damage", "Chaos Damage"];
 
 function buildWeaponOffense(item: InventoryItem): WeaponOffense {
@@ -40,7 +40,9 @@ export function computeOffenseStats(inventory: InventorySnapshot): OffenseStats 
     .filter(isWeaponItem)
     .map(buildWeaponOffense);
 
-  const allMods = parseMods(inventory.equipment.flatMap((item) => item.mods));
+  const allMods = parseMods(
+    inventory.equipment.filter((item) => contributesToActiveCharacter(item.slot)).flatMap((item) => item.mods)
+  );
 
   return {
     source: "gear_only",

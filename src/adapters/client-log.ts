@@ -9,8 +9,8 @@ import type { GameEvent, GameEventType, CurrentAreaSnapshot, SessionSummary } fr
  * IMPORTANT: the line patterns below are best-effort, based on long-standing
  * community knowledge of PoE1's (shared-engine) log format. GGG does not
  * publish a spec for this file, and exact wording can shift between
- * patches/locales. Unmatched lines are still surfaced as "raw_unmatched" so
- * nothing is silently dropped -- if you notice a pattern not firing, tail
+ * patches/locales. Unmatched lines are retained in a separate diagnostics
+ * buffer and surfaced only when explicitly requested -- if you notice a pattern not firing, tail
  * your own Client.txt (`tail -f logs/Client.txt`), find the real line, and
  * adjust the regex below.
  */
@@ -57,7 +57,7 @@ const PATTERNS: LinePattern[] = [
   },
 ];
 
-const CHAT_PREFIX = /^(?:@(From|To)\s|[#\$&%])/;
+const CHAT_PREFIX = /^(?:@(From|To)\s|[#\$&%]|<Guild>\s)/i;
 
 function messageFromLine(line: string): string {
   const closingBracket = line.indexOf("] ");
@@ -100,6 +100,7 @@ export class ClientLogTailer {
   private logPath: string | null;
   private offset = 0;
   private events: GameEvent[] = [];
+  private rawEvents: GameEvent[] = [];
   private pollHandle: NodeJS.Timeout | null = null;
   private sessionStartedAt = new Date().toISOString();
 
@@ -153,23 +154,23 @@ export class ClientLogTailer {
     for await (const line of rl) {
       if (line.trim().length === 0) continue;
       const event = parseLine(line);
-      this.events.push(event);
-      if (this.events.length > RING_BUFFER_SIZE) this.events.shift();
+      const buffer = event.type === "raw_unmatched" ? this.rawEvents : this.events;
+      buffer.push(event);
+      if (buffer.length > RING_BUFFER_SIZE) buffer.shift();
     }
     this.offset = stat.size;
   }
 
   getRecentEvents(opts: { sinceIso?: string; limit?: number; types?: GameEventType[] } = {}): GameEvent[] {
-    let filtered = this.events;
+    const wantsRaw = opts.types?.includes("raw_unmatched") ?? false;
+    let filtered = wantsRaw
+      ? [...this.events, ...this.rawEvents].sort((a, b) => a.timestamp.localeCompare(b.timestamp))
+      : this.events;
     if (opts.sinceIso) {
       filtered = filtered.filter((e) => e.timestamp >= opts.sinceIso!);
     }
     if (opts.types && opts.types.length > 0) {
       filtered = filtered.filter((e) => opts.types!.includes(e.type));
-    } else {
-      // Raw lines can contain private or noisy Client.txt content. They are
-      // available only when the caller explicitly asks for raw_unmatched.
-      filtered = filtered.filter((e) => e.type !== "raw_unmatched");
     }
     const limit = opts.limit ?? 50;
     return filtered.slice(-limit);

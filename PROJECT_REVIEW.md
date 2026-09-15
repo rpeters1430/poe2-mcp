@@ -10,7 +10,7 @@ Scope: all tracked source, tests, configuration, examples, documentation, packag
 
 The project has a promising architecture: adapters are separated from build calculations, MCP tool descriptions are unusually clear, the TypeScript build is strict, the dependency audit is clean, and the 37 existing unit tests pass. The passive-tree resolver also degrades sensibly when its remote dataset is unavailable.
 
-The server is not yet safe or dependable enough to treat as a broadly installable MCP server. The main blockers are:
+At the reviewed baseline, the server was not yet safe or dependable enough to treat as a broadly installable MCP server. Its main blockers were:
 
 1. MCP arguments can read arbitrary local files/directories and fetch arbitrary URLs.
 2. PoB imports accept unbounded compressed/XML/network input and decompress synchronously.
@@ -27,7 +27,7 @@ Recommendation: complete the P0 items before adding more data sources. Then fix 
 - Tests: the original 37 passed; milestone one expands the suite to 50 passing tests using `node --import tsx --test src/adapters/*.test.ts src/build/*.test.ts`.
 - `npm audit --json`: 0 known vulnerabilities across the installed dependency graph.
 - `npm pack --dry-run`: milestone one builds a 124.7 kB tarball containing 96 files, including all source/tests/maps and both generated `dist` files; package trimming remains a P2 item.
-- GitHub: no project-owned `.github/workflows` files; no open PRs; only the Renovate Dependency Dashboard is open.
+- GitHub baseline: no project-owned `.github/workflows` files. Milestone one adds `.github/workflows/ci.yml`; branch protection remains a repository-setting follow-up.
 
 The configured `npm test` command could not run in the review sandbox because the `tsx` CLI could not create its IPC pipe (`EPERM`). Running the same tests through Node's test runner and the `tsx` import hook passed. This is an environment/runner portability problem worth eliminating, not a failed product test.
 
@@ -58,11 +58,15 @@ This document was reconciled from all three reviews formerly in the repository. 
 
 ## Ranked issues and bugs
 
+The evidence in this ranked backlog records the reviewed baseline. Consult the
+implementation-status table above for fixes already made by milestone one;
+remaining acceptance criteria continue to describe the intended regression boundary.
+
 ### P0 — blockers
 
 #### 1. Arbitrary local file reads and directory enumeration
 
-**Evidence:** `list_recent_pob_builds` accepts any `buildsPath`; `import_pob_build` accepts any `filePath`; and `resolvePobXml(code)` treats any existing string as a local path. See [`src/tools/register.ts`](./src/tools/register.ts) around lines 424–489 and [`src/build/pob-decode.ts`](./src/build/pob-decode.ts) around lines 65–82.
+**Historical baseline evidence:** `list_recent_pob_builds` accepted any `buildsPath`; `import_pob_build` accepted any `filePath`; and `resolvePobXml(code)` treated any existing string as a local path. Milestone one restricts listing/imports to the configured builds root, separates `filePath`, and reads through a validated no-follow file descriptor.
 
 **Impact:** A prompt-injected or over-eager model can list an arbitrary directory's XML filenames and read any text file accessible to the server process. Even if non-XML content later fails parsing, its content has already crossed the MCP tool boundary and may appear in errors or model context. This violates least privilege for a server presented as a PoE2 data source.
 
@@ -78,7 +82,7 @@ This document was reconciled from all three reviews formerly in the repository. 
 
 #### 2. Server-side request forgery through generic URL import
 
-**Evidence:** [`src/build/pob-decode.ts`](./src/build/pob-decode.ts) lines 148–161 fetch any `http://` or `https://` URL and follows redirects by default.
+**Historical baseline evidence:** [`src/build/pob-decode.ts`](./src/build/pob-decode.ts) fetched arbitrary HTTP(S) URLs. Milestone one removes generic URL fetching and validates every redirect against an approved-host policy.
 
 **Impact:** A model can make requests from the user's machine to loopback services, NAS/admin panels, RFC1918 addresses, or cloud metadata endpoints. Redirects can bypass a superficial initial-host check.
 
@@ -88,7 +92,7 @@ This document was reconciled from all three reviews formerly in the repository. 
 
 #### 3. Unbounded synchronous PoB decompression and XML parsing
 
-**Evidence:** [`src/build/pob-decode.ts`](./src/build/pob-decode.ts) uses `inflateRawSync`, `inflateSync`, and `gunzipSync` without input/output limits. Remote bodies are read fully with `response.text()`, and `parsePobXml` accepts the full result.
+**Historical baseline evidence:** PoB decoding used unbounded synchronous decompression and whole-body downloads. Milestone one adds input, download, decompression, XML-size, timeout, redirect, and nesting limits.
 
 **Impact:** A compressed bomb or very large remote/file/XML input can block the single Node event loop, exhaust memory, crash the MCP process, or make every tool unresponsive.
 
@@ -98,7 +102,7 @@ This document was reconciled from all three reviews formerly in the repository. 
 
 #### 4. Dependency automerge has no CI safety gate
 
-**Evidence:** [`renovate.json`](./renovate.json) automerges eligible minor/patch/pin/lockfile updates, while the repository contains no `.github/workflows` directory. The only Actions history is dynamic Copilot review, not build/test validation.
+**Historical baseline evidence:** Renovate automerged eligible updates while the repository had no project-owned workflow. Milestone one adds build/test/audit/package validation on Node 20, 22, and 24; required branch protection must still be configured in GitHub.
 
 **Impact:** A type-breaking, behavior-breaking, or compromised dependency update can merge without compiling or running tests. Pre-1.0 packages are excluded from one rule, but the broad configuration still lacks a required validation gate.
 
@@ -110,7 +114,7 @@ This document was reconciled from all three reviews formerly in the repository. 
 
 #### 5. Requested-character fallbacks can return another build under the requested name
 
-**Evidence:** When API/ninja lookup fails, `get_character_state` calls `pobBuildToCharacterState(active, characterName)`; similar fallbacks exist for inventory, passives, defenses, offense, and item comparison. The override changes the returned label but does not prove that the active build belongs to that character. See [`src/tools/register.ts`](./src/tools/register.ts) lines 119–139 and the other fallback handlers.
+**Historical baseline evidence:** Explicit character requests could fall back to an unrelated active build while relabeling it. Milestone one rejects that fallback; milestone two adds explicit build identity and provenance.
 
 **Impact:** The server can confidently provide equipment/stats from character A labeled as character B. Advice based on the response may be wrong with no visible failure.
 
@@ -150,7 +154,7 @@ This document was reconciled from all three reviews formerly in the repository. 
 
 #### 9. Client-log data exposes excessive raw/private content by default
 
-**Evidence:** Every unmatched line becomes `raw_unmatched`; `get_recent_events` returns raw lines and the absolute log path. The ring buffer can therefore capture chat/system lines beyond the documented event types. See [`src/adapters/client-log.ts`](./src/adapters/client-log.ts) and [`src/tools/register.ts`](./src/tools/register.ts) lines 350–372.
+**Historical baseline evidence:** Every unmatched line shared the normal event ring and the response exposed the absolute log path. Milestone one separates raw diagnostics, makes them opt-in, classifies chat as untrusted, and exposes only `logAvailable` by default.
 
 **Impact:** Whisper/chat text, account/character names, local paths, or other log content can be sent to the connected model even when the user asked only for gameplay events.
 

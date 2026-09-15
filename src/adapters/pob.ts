@@ -105,5 +105,38 @@ export function listRecentPobBuilds(dir: string): PobBuildFileInfo[] {
 }
 
 export function readPobBuildFile(filePath: string, buildsDir: string): string {
-  return fs.readFileSync(validatePobBuildFile(filePath, buildsDir), "utf8");
+  const root = fs.realpathSync(buildsDir);
+  const candidate = path.resolve(filePath);
+  if (!isWithinRoot(candidate, root)) {
+    throw new Error("PoB build files must be inside the configured Path of Building Builds directory.");
+  }
+  if (path.extname(candidate).toLowerCase() !== ".xml") {
+    throw new Error("PoB build files must use the .xml extension.");
+  }
+
+  // Open the file itself before validating its identity. Reading from this
+  // descriptor prevents a path replacement after validation from changing
+  // which file is read. O_NOFOLLOW rejects a symlink at the final path.
+  const noFollow = fs.constants.O_NOFOLLOW ?? 0;
+  let fd: number | null = null;
+  try {
+    fd = fs.openSync(candidate, fs.constants.O_RDONLY | noFollow);
+    const opened = fs.fstatSync(fd);
+    if (!opened.isFile()) throw new Error("PoB build path must refer to a regular file.");
+    if (opened.size > MAX_POB_FILE_BYTES) {
+      throw new Error(`PoB build file exceeds the ${MAX_POB_FILE_BYTES} byte safety limit.`);
+    }
+
+    const resolved = fs.realpathSync(candidate);
+    if (!isWithinRoot(resolved, root)) {
+      throw new Error("PoB build files must be inside the configured Path of Building Builds directory.");
+    }
+    const current = fs.statSync(candidate);
+    if (current.dev !== opened.dev || current.ino !== opened.ino) {
+      throw new Error("PoB build file changed while it was being opened; retry the import.");
+    }
+    return fs.readFileSync(fd, "utf8");
+  } finally {
+    if (fd !== null) fs.closeSync(fd);
+  }
 }

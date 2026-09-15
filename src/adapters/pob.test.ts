@@ -35,6 +35,7 @@ test("rejects symlink escapes and non-XML files", () => {
   fs.writeFileSync(target, "secret");
   fs.symlinkSync(target, link);
   assert.throws(() => validatePobBuildFile(link, root), /must be inside/);
+  assert.throws(() => readPobBuildFile(link, root));
 
   const textFile = path.join(root, "notes.txt");
   fs.writeFileSync(textFile, "not a build");
