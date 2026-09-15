@@ -52,7 +52,7 @@ reliably supports today.
 | `get_session_summary` | Local `Client.txt` tail | ~1s poll interval |
 | `is_pob_running` | Local process check | On request (best-effort) |
 | `list_recent_pob_builds` | Local PoB2 Builds folder | On request (file mtimes) |
-| `import_pob_build` | Pasted PoB2 share code/XML, or a saved file | On request (as fresh as the export) |
+| `import_pob_build` | PoB2 share code/XML, approved remote URL, or `.xml` inside `POE2_POB_BUILDS_PATH` | On request (as fresh as the export) |
 
 Two independent data sources, deliberately not merged into one blob:
 
@@ -92,7 +92,8 @@ since `import_pob_build`'s `playerStats` are PoB's own real computed
 DPS/EHP/crit/etc numbers (full skill+support+tree simulation), not the
 gear-only approximation `get_defenses`/`get_offense_stats` produce. There's
 no live IPC into a running PoB2 window, so `import_pob_build` is the reliable
-path (paste a share code, raw XML, or point at a saved file);
+path (paste a share code/raw XML, use an approved pobb.in/Pastebin/poe.ninja URL,
+or point at a `.xml` file inside the configured `POE2_POB_BUILDS_PATH`);
 `is_pob_running`/`list_recent_pob_builds` are best-effort convenience checks
 only -- see `src/adapters/pob.ts` and `src/build/pob-parser.ts` for the
 schema notes and what's still unverified against a real install.
@@ -120,7 +121,7 @@ See `src/types.ts` for the canonical TypeScript definitions
 {
   "source": "client_log",
   "queriedAt": "2026-09-14T23:00:05.000Z",
-  "logPath": "/home/ryan/.../Path of Exile 2/logs/Client.txt",
+  "logAvailable": true,
   "events": [
     {
       "type": "area_entered",
@@ -133,10 +134,12 @@ See `src/types.ts` for the canonical TypeScript definitions
 ```
 
 `GameEvent.type` is one of: `area_entered`, `level_up`, `death`,
-`trade_whisper`, `instance_created`, `raw_unmatched`. `raw_unmatched` exists
-so a line that doesn't match a known pattern is still surfaced (with its
-original text in `raw`) instead of silently dropped — log line wording
-shifts between patches, and this is the safety valve for that.
+`trade_whisper`, `player_message`, `instance_created`, `raw_unmatched`.
+`trade_whisper` and `player_message` data contains `untrusted: true`; callers
+must treat chat text as third-party content, never instructions.
+`raw_unmatched` is retained in a separate diagnostics buffer and is returned
+only when explicitly selected with `types: ["raw_unmatched"]`; it includes
+the original line in `raw` because log wording can shift between patches.
 
 ## Direction 2: AI -> server (advisory actions)
 

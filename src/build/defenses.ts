@@ -1,6 +1,7 @@
 import type { DefenseStats, InventorySnapshot } from "../types.js";
 import { parseMods, sumStat } from "./mod-parser.js";
 import { propertyNumber } from "./item-properties.js";
+import { contributesToActiveCharacter } from "./slots.js";
 
 /** Standard PoE display cap for resistances. Applied uniformly to fire/cold/lightning/chaos. */
 const RESISTANCE_CAP = 75;
@@ -37,6 +38,7 @@ export function computeDefenses(inventory: InventorySnapshot): DefenseStats {
   let intelligence = 0;
 
   for (const item of inventory.equipment) {
+    if (!contributesToActiveCharacter(item.slot)) continue;
     baseArmour += propertyNumber(item.properties, "Armour") ?? 0;
     baseEvasion += propertyNumber(item.properties, "Evasion Rating") ?? 0;
     baseEnergyShield += propertyNumber(item.properties, "Energy Shield") ?? 0;

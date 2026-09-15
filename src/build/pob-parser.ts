@@ -1,5 +1,6 @@
 import { XMLParser } from "fast-xml-parser";
 import type { InventoryItem, ItemProperty, ParsedItemText, PobBuildSnapshot, PobGem, PobPassiveSpec, PobSkillGroup } from "../types.js";
+import { normalizeEquipmentSlot } from "./slots.js";
 
 /**
  * Parses a PoB2 build XML into a PobBuildSnapshot. Verified against a real
@@ -125,7 +126,7 @@ function parseEquipment(itemsNode: any): InventoryItem[] {
   const equipment: InventoryItem[] = [];
   for (const slot of asArray<any>(activeItemSet.Slot)) {
     const item = itemsById.get(String(slot["@_itemId"]));
-    if (item) equipment.push({ ...item, slot: slot["@_name"] ?? null });
+    if (item) equipment.push({ ...item, slot: normalizeEquipmentSlot(slot["@_name"]) });
   }
   return equipment;
 }

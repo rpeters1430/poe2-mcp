@@ -48,7 +48,7 @@ test("resolves equipment via the active item set's slots", () => {
   const build = parsePobXml(SAMPLE_XML);
   assert.equal(build.equipment.length, 1);
   const item = build.equipment[0];
-  assert.equal(item.slot, "Body Armour");
+  assert.equal(item.slot, "BodyArmour");
   assert.equal(item.name, "Doom Weave");
   assert.equal(item.baseType, "Vaal Regalia");
   assert.equal(item.itemLevel, 82);

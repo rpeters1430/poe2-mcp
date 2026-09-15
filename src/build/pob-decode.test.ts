@@ -39,3 +39,16 @@ test("resolvePobXml decodes a share code when nothing else matches", async () =>
   const code = toShareCode(xml);
   assert.equal(await resolvePobXml(code), xml);
 });
+
+test("resolvePobXml rejects generic URLs before fetching them", async () => {
+  await assert.rejects(
+    resolvePobXml("http://127.0.0.1:8080/private"),
+    /Generic URL imports are disabled/
+  );
+});
+
+test("decodePobCode limits decompressed output", () => {
+  const oversizedXml = `<PathOfBuilding2>${"x".repeat(20 * 1024 * 1024)}</PathOfBuilding2>`;
+  const code = toShareCode(oversizedXml);
+  assert.throws(() => decodePobCode(code), /Could not decompress/);
+});

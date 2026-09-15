@@ -135,12 +135,12 @@ files above are usable verbatim.
 | `get_defenses` | server → AI | Gear-only life/ES/armour/evasion/resistances/block/attributes |
 | `get_offense_stats` | server → AI | Gear-only weapon damage/crit/speed stats (not a DPS number) |
 | `compare_item` | server → AI | Diff a pasted item against what's currently equipped in that slot |
-| `get_recent_events` | server → AI | Recent parsed log events (area/level/death/trade) |
+| `get_recent_events` | server → AI | Recent parsed log events (area/level/death/trade/chat); raw diagnostics are opt-in |
 | `get_current_area` | server → AI | Last area entered, per the log |
 | `get_session_summary` | server → AI | Areas visited / deaths / level-ups this session |
 | `is_pob_running` | server → AI | Best-effort check for a running Path of Building 2 process |
 | `list_recent_pob_builds` | server → AI | Recently saved PoB2 `.xml` builds, most-recent first |
-| `import_pob_build` | server → AI | Parse a pasted PoB2 share code, XML, file, pobb.in, or poe.ninja URL |
+| `import_pob_build` | server → AI | Parse a PoB2 share code/raw XML, approved URL, or `.xml` inside `POE2_POB_BUILDS_PATH` |
 | `emit_advisory` | AI → server | The only "action" tool — see PROTOCOL.md |
 
 Full schemas: `src/types.ts`. Full protocol rationale: `PROTOCOL.md`.
@@ -150,9 +150,9 @@ Full schemas: `src/types.ts`. Full protocol rationale: `PROTOCOL.md`.
 `src/adapters/client-log.ts` parses `Client.txt` with regexes based on
 long-standing community knowledge of the format — GGG doesn't publish a
 spec for it, and exact wording can drift between patches or locales.
-Unmatched lines still come through as `raw_unmatched` (with the original
-text) rather than being dropped, so nothing is lost if a pattern goes
-stale — but if you notice events not firing, `tail -f` your real
+Unmatched lines are retained in a separate diagnostics buffer and returned
+only when the caller explicitly requests `types: ["raw_unmatched"]` (with
+the original text). If you notice events not firing, `tail -f` your real
 `Client.txt`, find the actual line, and adjust the pattern.
 
 ## A note on the GGG API adapter

@@ -51,6 +51,19 @@ test("aggregates speed/crit affixes across all equipped items, not just weapons"
   assert.equal(stats.accuracyRating, 50);
 });
 
+test("excludes swap weapons, flasks, and charms from offensive mod totals", () => {
+  const inv = snapshot([
+    item({ slot: "Weapon", mods: ["10% increased Attack Speed"] }),
+    item({ slot: "Weapon2", mods: ["90% increased Attack Speed"] }),
+    item({ slot: "Flask 1", mods: ["+100 to Accuracy Rating"] }),
+    item({ slot: "Charm 1", mods: ["100% increased Critical Strike Chance"] }),
+  ]);
+  const stats = computeOffenseStats(inv);
+  assert.equal(stats.increasedAttackSpeedPercent, 10);
+  assert.equal(stats.accuracyRating, 0);
+  assert.equal(stats.increasedCriticalStrikeChancePercent, 0);
+});
+
 test("otherDamageMods keeps any raw mod text mentioning damage", () => {
   const inv = snapshot([item({ mods: ["Adds 5 to 10 Physical Damage", "+10 to Strength"] })]);
   const stats = computeOffenseStats(inv);

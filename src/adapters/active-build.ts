@@ -51,7 +51,7 @@ export async function resolveActiveBuild(): Promise<PobBuildSnapshot | null> {
     const recent = listRecentPobBuilds(pobDir);
     if (recent.length > 0) {
       try {
-        const raw = readPobBuildFile(recent[0].path);
+        const raw = readPobBuildFile(recent[0].path, pobDir);
         const xml = await resolvePobXml(raw);
         const build = parsePobXml(xml);
         saveActiveBuild(build);

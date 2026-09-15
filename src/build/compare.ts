@@ -1,6 +1,7 @@
 import type { DefenseStats, InventoryItem, InventorySnapshot, ItemComparison, ParsedItemText, StatDelta } from "../types.js";
 import { parseMods, sumStat } from "./mod-parser.js";
 import { computeDefenses } from "./defenses.js";
+import { normalizeEquipmentSlot } from "./slots.js";
 
 /**
  * Best-effort equipment-slot inference from an item's base type, used when
@@ -61,8 +62,10 @@ export function compareItem(
   candidate: ParsedItemText,
   slotOverride?: string
 ): ItemComparison {
-  const slot = slotOverride ?? inferSlot(candidate.baseType);
-  const current = slot ? inventory.equipment.find((item) => item.slot === slot) ?? null : null;
+  const slot = normalizeEquipmentSlot(slotOverride ?? inferSlot(candidate.baseType));
+  const current = slot
+    ? inventory.equipment.find((item) => normalizeEquipmentSlot(item.slot) === slot) ?? null
+    : null;
 
   const currentParsed = current ? parseMods(current.mods) : [];
   const candidateParsed = parseMods(candidate.mods);
@@ -83,7 +86,10 @@ export function compareItem(
     defensesBefore = computeDefenses(inventory);
     const swapped: InventorySnapshot = {
       ...inventory,
-      equipment: [...inventory.equipment.filter((item) => item.slot !== slot), toInventoryItem(candidate, slot)],
+      equipment: [
+        ...inventory.equipment.filter((item) => normalizeEquipmentSlot(item.slot) !== slot),
+        toInventoryItem(candidate, slot),
+      ],
     };
     defensesAfter = computeDefenses(swapped);
   }

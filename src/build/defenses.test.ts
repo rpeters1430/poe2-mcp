@@ -52,3 +52,13 @@ test("blockChancePercent is null rather than 0 when no gear grants block", () =>
   const defenses = computeDefenses(snapshot([item({})]));
   assert.equal(defenses.blockChancePercent, null);
 });
+
+test("excludes swap weapons, flasks, and charms from active defense totals", () => {
+  const defenses = computeDefenses(snapshot([
+    item({ slot: "Ring", mods: ["+20% to Fire Resistance"] }),
+    item({ slot: "Weapon2", mods: ["+40% to Fire Resistance"] }),
+    item({ slot: "Flask 1", mods: ["+30% to Fire Resistance"] }),
+    item({ slot: "Charm 1", mods: ["+10% to Fire Resistance"] }),
+  ]));
+  assert.equal(defenses.resistances.fire.raw, 20);
+});

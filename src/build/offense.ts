@@ -1,8 +1,7 @@
 import type { InventoryItem, InventorySnapshot, OffenseStats, WeaponOffense } from "../types.js";
 import { parseMods, sumStat } from "./mod-parser.js";
 import { propertyNumber, propertyRange } from "./item-properties.js";
-
-const WEAPON_SLOT = /^weapon/i;
+import { contributesToActiveCharacter, isActiveWeaponSlot } from "./slots.js";
 const ELEMENTAL_DAMAGE_PROPERTIES = ["Fire Damage", "Cold Damage", "Lightning Damage", "Chaos Damage"];
 
 function buildWeaponOffense(item: InventoryItem): WeaponOffense {
@@ -19,6 +18,12 @@ function buildWeaponOffense(item: InventoryItem): WeaponOffense {
   };
 }
 
+function isWeaponItem(item: InventoryItem): boolean {
+  if (!isActiveWeaponSlot(item.slot)) return false;
+  return propertyRange(item.properties, "Physical Damage") !== null ||
+    ELEMENTAL_DAMAGE_PROPERTIES.some((name) => propertyRange(item.properties, name) !== null);
+}
+
 /**
  * Aggregates gear-derived offensive inputs: weapon damage ranges/crit/APS
  * from item properties, plus speed/crit/accuracy affixes and raw damage-
@@ -32,10 +37,12 @@ function buildWeaponOffense(item: InventoryItem): WeaponOffense {
  */
 export function computeOffenseStats(inventory: InventorySnapshot): OffenseStats {
   const weapons = inventory.equipment
-    .filter((item) => item.slot && WEAPON_SLOT.test(item.slot))
+    .filter(isWeaponItem)
     .map(buildWeaponOffense);
 
-  const allMods = parseMods(inventory.equipment.flatMap((item) => item.mods));
+  const allMods = parseMods(
+    inventory.equipment.filter((item) => contributesToActiveCharacter(item.slot)).flatMap((item) => item.mods)
+  );
 
   return {
     source: "gear_only",

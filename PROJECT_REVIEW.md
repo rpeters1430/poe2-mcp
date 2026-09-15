@@ -1,14 +1,16 @@
 # poe2-mcp full project review
 
 Reviewed: 2026-09-15  
-Reviewed commit: `145270d43ae2f78bd2e6533e3ffcf82ae53132fd` (`main`)  
+Canonical review: this file supersedes `poe2-mcp-review.md` and `poe2_mcp_review.md`.
+
+Reviewed runtime commit: `145270d43ae2f78bd2e6533e3ffcf82ae53132fd`; reconciled on `db00d32e3ff452b6374df1c799b66f84abb8e6c6` (`main`).
 Scope: all tracked source, tests, configuration, examples, documentation, package contents, repository automation, and open repository items.
 
 ## Executive summary
 
 The project has a promising architecture: adapters are separated from build calculations, MCP tool descriptions are unusually clear, the TypeScript build is strict, the dependency audit is clean, and the 37 existing unit tests pass. The passive-tree resolver also degrades sensibly when its remote dataset is unavailable.
 
-The server is not yet safe or dependable enough to treat as a broadly installable MCP server. The main blockers are:
+At the reviewed baseline, the server was not yet safe or dependable enough to treat as a broadly installable MCP server. Its main blockers were:
 
 1. MCP arguments can read arbitrary local files/directories and fetch arbitrary URLs.
 2. PoB imports accept unbounded compressed/XML/network input and decompress synchronously.
@@ -22,12 +24,28 @@ Recommendation: complete the P0 items before adding more data sources. Then fix 
 
 - `npm ci`: passed.
 - `npm run build`: passed with TypeScript strict mode.
-- Tests: all 37 passed using `node --import tsx --test src/adapters/tree-data.test.ts src/build/*.test.ts`.
+- Tests: the original 37 passed; milestone one expands the suite to 50 passing tests using `node --import tsx --test src/adapters/*.test.ts src/build/*.test.ts`.
 - `npm audit --json`: 0 known vulnerabilities across the installed dependency graph.
-- `npm pack --dry-run`: package builds a 104.4 kB tarball containing 88 files, including all source/tests/maps and both generated `dist` files.
-- GitHub: no project-owned `.github/workflows` files; no open PRs; only the Renovate Dependency Dashboard is open.
+- `npm pack --dry-run`: milestone one builds a 124.7 kB tarball containing 96 files, including all source/tests/maps and both generated `dist` files; package trimming remains a P2 item.
+- GitHub baseline: no project-owned `.github/workflows` files. Milestone one adds `.github/workflows/ci.yml`; branch protection remains a repository-setting follow-up.
 
 The configured `npm test` command could not run in the review sandbox because the `tsx` CLI could not create its IPC pipe (`EPERM`). Running the same tests through Node's test runner and the `tsx` import hook passed. This is an environment/runner portability problem worth eliminating, not a failed product test.
+
+## Reconciliation notes
+
+This document was reconciled from all three reviews formerly in the repository. Findings were retained only when supported by the current code or clearly labeled as requiring a real PoE2 fixture. The short `poe2_mcp_review.md` was not treated as authoritative because it incorrectly claimed that the log was not tailed, OAuth tokens were not refreshed, malformed share codes lacked error handling, and `memory-adapter.ts` provided caching. The larger `poe2-mcp-review.md` contained useful additional findings that are incorporated below.
+
+## Implementation status
+
+| Item | Status |
+|---|---|
+| Restrict local PoB file reads to the configured Builds directory | Implemented in milestone-one PR |
+| Remove generic URL imports and validate redirects | Implemented in milestone-one PR |
+| Add PoB input/download/decompression limits | Implemented in milestone-one PR |
+| Prevent explicit-character requests from using an unrelated active build | Implemented in milestone-one PR |
+| Prevent chat/whispers from spoofing system events; hide raw events by default | Implemented in milestone-one PR |
+| Normalize PoB/GGG slots and exclude swap/flask/charm slots from active totals | Implemented in milestone-one PR |
+| Add build/test/audit/package CI on Node 20/22/24 | Implemented in milestone-one PR |
 
 ## Priority definitions
 
@@ -40,11 +58,15 @@ The configured `npm test` command could not run in the review sandbox because th
 
 ## Ranked issues and bugs
 
+The evidence in this ranked backlog records the reviewed baseline. Consult the
+implementation-status table above for fixes already made by milestone one;
+remaining acceptance criteria continue to describe the intended regression boundary.
+
 ### P0 — blockers
 
 #### 1. Arbitrary local file reads and directory enumeration
 
-**Evidence:** `list_recent_pob_builds` accepts any `buildsPath`; `import_pob_build` accepts any `filePath`; and `resolvePobXml(code)` treats any existing string as a local path. See [`src/tools/register.ts`](./src/tools/register.ts) around lines 424–489 and [`src/build/pob-decode.ts`](./src/build/pob-decode.ts) around lines 65–82.
+**Historical baseline evidence:** `list_recent_pob_builds` accepted any `buildsPath`; `import_pob_build` accepted any `filePath`; and `resolvePobXml(code)` treated any existing string as a local path. Milestone one restricts listing/imports to the configured builds root, separates `filePath`, and reads through a validated no-follow file descriptor.
 
 **Impact:** A prompt-injected or over-eager model can list an arbitrary directory's XML filenames and read any text file accessible to the server process. Even if non-XML content later fails parsing, its content has already crossed the MCP tool boundary and may appear in errors or model context. This violates least privilege for a server presented as a PoE2 data source.
 
@@ -60,7 +82,7 @@ The configured `npm test` command could not run in the review sandbox because th
 
 #### 2. Server-side request forgery through generic URL import
 
-**Evidence:** [`src/build/pob-decode.ts`](./src/build/pob-decode.ts) lines 148–161 fetch any `http://` or `https://` URL and follows redirects by default.
+**Historical baseline evidence:** [`src/build/pob-decode.ts`](./src/build/pob-decode.ts) fetched arbitrary HTTP(S) URLs. Milestone one removes generic URL fetching and validates every redirect against an approved-host policy.
 
 **Impact:** A model can make requests from the user's machine to loopback services, NAS/admin panels, RFC1918 addresses, or cloud metadata endpoints. Redirects can bypass a superficial initial-host check.
 
@@ -70,7 +92,7 @@ The configured `npm test` command could not run in the review sandbox because th
 
 #### 3. Unbounded synchronous PoB decompression and XML parsing
 
-**Evidence:** [`src/build/pob-decode.ts`](./src/build/pob-decode.ts) uses `inflateRawSync`, `inflateSync`, and `gunzipSync` without input/output limits. Remote bodies are read fully with `response.text()`, and `parsePobXml` accepts the full result.
+**Historical baseline evidence:** PoB decoding used unbounded synchronous decompression and whole-body downloads. Milestone one adds input, download, decompression, XML-size, timeout, redirect, and nesting limits.
 
 **Impact:** A compressed bomb or very large remote/file/XML input can block the single Node event loop, exhaust memory, crash the MCP process, or make every tool unresponsive.
 
@@ -80,7 +102,7 @@ The configured `npm test` command could not run in the review sandbox because th
 
 #### 4. Dependency automerge has no CI safety gate
 
-**Evidence:** [`renovate.json`](./renovate.json) automerges eligible minor/patch/pin/lockfile updates, while the repository contains no `.github/workflows` directory. The only Actions history is dynamic Copilot review, not build/test validation.
+**Historical baseline evidence:** Renovate automerged eligible updates while the repository had no project-owned workflow. Milestone one adds build/test/audit/package validation on Node 20, 22, and 24; required branch protection must still be configured in GitHub.
 
 **Impact:** A type-breaking, behavior-breaking, or compromised dependency update can merge without compiling or running tests. Pre-1.0 packages are excluded from one rule, but the broad configuration still lacks a required validation gate.
 
@@ -92,7 +114,7 @@ The configured `npm test` command could not run in the review sandbox because th
 
 #### 5. Requested-character fallbacks can return another build under the requested name
 
-**Evidence:** When API/ninja lookup fails, `get_character_state` calls `pobBuildToCharacterState(active, characterName)`; similar fallbacks exist for inventory, passives, defenses, offense, and item comparison. The override changes the returned label but does not prove that the active build belongs to that character. See [`src/tools/register.ts`](./src/tools/register.ts) lines 119–139 and the other fallback handlers.
+**Historical baseline evidence:** Explicit character requests could fall back to an unrelated active build while relabeling it. Milestone one rejects that fallback; milestone two adds explicit build identity and provenance.
 
 **Impact:** The server can confidently provide equipment/stats from character A labeled as character B. Advice based on the response may be wrong with no visible failure.
 
@@ -132,7 +154,7 @@ The configured `npm test` command could not run in the review sandbox because th
 
 #### 9. Client-log data exposes excessive raw/private content by default
 
-**Evidence:** Every unmatched line becomes `raw_unmatched`; `get_recent_events` returns raw lines and the absolute log path. The ring buffer can therefore capture chat/system lines beyond the documented event types. See [`src/adapters/client-log.ts`](./src/adapters/client-log.ts) and [`src/tools/register.ts`](./src/tools/register.ts) lines 350–372.
+**Historical baseline evidence:** Every unmatched line shared the normal event ring and the response exposed the absolute log path. Milestone one separates raw diagnostics, makes them opt-in, classifies chat as untrusted, and exposes only `logAvailable` by default.
 
 **Impact:** Whisper/chat text, account/character names, local paths, or other log content can be sent to the connected model even when the user asked only for gameplay events.
 
@@ -254,6 +276,48 @@ Large state, cache, directory, and build reads/writes block every tool. Move req
 
 PoB process detection uses substring matching over `tasklist`/`ps -A`; path candidates omit several library/custom-folder cases. A `doctor` command with explicit discovery results is preferable to silently guessing.
 
+### Additional reconciled findings
+
+#### 27. PoB and GGG equipment slots need one canonical model — P1
+
+PoB labels such as `Helmet`, `Body Armour`, `Ring 1`, and `Weapon 1` do not reliably match GGG-style labels such as `Helm`, `BodyArmour`, `Ring`, and `Weapon`. Exact string matching can fail to find/remove the equipped item during comparison and then add the candidate on top of the old item. Add a canonical slot enum and normalize at every adapter and tool boundary.
+
+#### 28. Inactive weapon sets, flasks, and charms can pollute totals — P1
+
+Defense aggregation loops over all equipment and offense accepts any slot beginning with `weapon`. Normalize slots, identify the active weapon set, and limit each calculation to slots that contribute to that calculation. Add separate weapon-set comparison when desired.
+
+#### 29. Chat can spoof game events — P0
+
+System regexes were matched against the entire line before chat was classified. A whisper ending in “has been slain” or containing “You have entered” could be interpreted as real state. Parse the log prefix and channel first, anchor system-message patterns, and mark all chat payloads as untrusted third-party text.
+
+#### 30. Raw log noise can evict session history — P1
+
+Recognized events and `raw_unmatched` lines share the same 500-entry ring, while session totals are recomputed from that ring. Keep raw diagnostics separate and opt-in; maintain session counters independently so debug noise cannot erase deaths/areas from the summary.
+
+#### 31. PoE2 terminology and hybrid mods need fixtures — P1, verify against live data
+
+The parser mainly recognizes “Critical Strike” wording, simple integer affixes, and single-stat lines. Verify real PoE2 forms such as “Critical Hit,” hybrid resistances/attributes, Spirit, maximum resistances, roll ranges, rune/implicit/crafted suffixes, and PoB `{tag}` prefixes. Normalize formatting before pattern matching and publish a recognition-confidence count.
+
+#### 32. Elemental weapon properties may use a multi-value representation — P1, verify against live data
+
+Offense looks for separate `Fire Damage`, `Cold Damage`, and `Lightning Damage` properties and `propertyRange` reads only the first value. Add sanitized GGG/clipboard fixtures and support the actual multi-value `Elemental Damage` representation if confirmed.
+
+#### 33. PoB fallback invents unknown character fields — P1
+
+Fallback conversion uses a class name as a character name and substitutes `level: 1`, `experience: 0`, and `hardcore: false` when values are unknown; parsed skill groups are dropped from the inventory shape. Model unknown values as nullable and preserve source identity/skills instead of manufacturing facts.
+
+#### 34. Tool results are larger than necessary — P2
+
+Full pretty-printed builds, duplicated passive hashes/resolutions, and an arbitrary `playerStats.slice(0, 30)` consume model context without guaranteeing the important stats are present. Return compact summaries by default, support explicit detail levels, and select PoB stats by stable names.
+
+#### 35. Time filtering should compare instants, not strings — P2
+
+`sinceIso` currently uses lexicographic comparison. Parse and compare epoch values so future acceptance of valid timezone offsets or different precision cannot silently break filtering.
+
+#### 36. PoB process detection is fragile — P2
+
+`ps -A` output can truncate or omit the full command name and Wine/Proton executable names differ. Use full command lines (`ps -eo args`) and normalized candidate names, while continuing to report detection as best-effort.
+
 ## Ranked feature roadmap
 
 | Rank | Priority | Feature | Value | Key dependency |
@@ -273,6 +337,12 @@ PoB process detection uses substring matching over `tasklist`/`ps -A`; path cand
 | 13 | P3 | Real overlay companion | A small opt-in overlay that acknowledges messages, honors TTL, deduplicates/rate-limits, and never sends game input. | Advisory hardening. |
 | 14 | P3 | Sanitized diagnostic bundle | Export configuration shape, versions, recent structured errors, and parser coverage without tokens, full paths, raw chat, or build secrets. | Redaction framework. |
 | 15 | P3 | Optional local HTTP transport | Useful for containers/remote clients only with loopback default, authentication, origin/host validation, TLS guidance, and an explicit threat model. | Finish all P0 security work first. |
+| 16 | P2 | Headless PoB calculation | Load builds and calculate real item/build deltas through PoB's supported headless path instead of approximating DPS/EHP. | Secure process execution and real fixtures. |
+| 17 | P2 | Structured trade whispers | Parse item, price, currency, league, stash, and position while preserving an `untrusted` marker. | Correct chat classification and privacy controls. |
+| 18 | P2 | PoE2 game-data layer | Use a maintained data export for base types, slot classes, modifier tiers, and local/global semantics. | Source licensing, patch versioning, and cache validation. |
+| 19 | P3 | MCP prompt templates | Provide `review-my-build`, `why-did-i-die`, and `should-i-buy-this-item` workflows that call the right tools. | Stable typed tool outputs. |
+| 20 | P3 | Crafting-analysis integration | Add affix weights and crafting simulations only through an authorized/stable data source; do not scrape fragile pages. | Game-data layer and source terms review. |
+| 21 | P3 | Container packaging | Provide a hardened container for non-log use or explicitly mounted game/build paths; document why local desktop integrations need extra configuration. | Release-safe npm packaging and least-privilege mounts. |
 
 ## Recommended implementation order
 
@@ -311,4 +381,3 @@ Start with `doctor`, active-build controls/watching, build confidence, and unifi
 - A packed tarball installs and both CLI bins run in a clean environment.
 - Renovate automerge requires successful checks.
 - The README documents permissions, privacy, threat model, source precedence, and recovery steps.
-

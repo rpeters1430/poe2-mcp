@@ -53,3 +53,12 @@ test("unresolvable slot skips the defense comparison but keeps raw mods", () => 
   assert.equal(result.defensesBefore, null);
   assert.equal(result.defensesAfter, null);
 });
+
+test("matches PoB and GGG variants of the same slot", () => {
+  const inv = snapshot([item({ slot: "Helmet", name: "Old Helm", baseType: "Iron Helmet" })]);
+  const candidate = parseItemText(`Rarity: Magic\nNew Helm\nIron Helmet\n--------\n+50 to maximum Life`);
+  const result = compareItem(inv, candidate);
+  assert.equal(result.slot, "Helm");
+  assert.equal(result.current?.name, "Old Helm");
+  assert.equal(result.defensesAfter!.life, 50);
+});
