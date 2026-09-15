@@ -27,42 +27,66 @@ const TIMESTAMP_PREFIX = /^(\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2})/;
 const PATTERNS: LinePattern[] = [
   {
     type: "area_entered",
-    regex: /: You have entered (.+?)\.$/,
+    regex: /^You have entered (.+?)\.$/,
     extract: (m) => ({ area: m[1] }),
   },
   {
     type: "level_up",
-    regex: /: (.+?) \(.+?\) is now level (\d+)/,
+    regex: /^(.+?) \(.+?\) is now level (\d+)$/,
     extract: (m) => ({ character: m[1], level: Number(m[2]) }),
   },
   {
     type: "level_up",
-    regex: /: (.+?) has reached level (\d+)/,
+    regex: /^(.+?) has reached level (\d+)$/,
     extract: (m) => ({ character: m[1], level: Number(m[2]) }),
   },
   {
     type: "death",
-    regex: /: (.+?) has been slain\.?$/,
+    regex: /^(.+?) has been slain\.?$/,
     extract: (m) => ({ character: m[1] }),
   },
   {
     type: "trade_whisper",
-    regex: /: @(From|To) (.+?): (.+)$/,
+    regex: /^@(From|To) (.+?): (.+)$/,
     extract: (m) => ({ direction: m[1], player: m[2], message: m[3] }),
   },
   {
     type: "instance_created",
-    regex: /: Generating level (\d+) area "(.+?)" with seed (\d+)/,
+    regex: /^Generating level (\d+) area "(.+?)" with seed (\d+)$/,
     extract: (m) => ({ areaLevel: Number(m[1]), areaId: m[2], seed: Number(m[3]) }),
   },
 ];
 
-function parseLine(line: string): GameEvent {
+const CHAT_PREFIX = /^(?:@(From|To)\s|[#\$&%])/;
+
+function messageFromLine(line: string): string {
+  const closingBracket = line.indexOf("] ");
+  const payload = closingBracket >= 0 ? line.slice(closingBracket + 2) : line;
+  return payload.trimStart().replace(/^:\s*/, "");
+}
+
+export function parseLine(line: string): GameEvent {
   const tsMatch = line.match(TIMESTAMP_PREFIX);
   const timestamp = tsMatch ? new Date(tsMatch[1].replace(/\//g, "-")).toISOString() : new Date().toISOString();
+  const message = messageFromLine(line);
+
+  // Chat is third-party, untrusted content. Classify it before game-system
+  // patterns so a whisper such as "You have entered ..." cannot spoof state.
+  if (CHAT_PREFIX.test(message)) {
+    const whisper = message.match(/^@(From|To) (.+?): (.+)$/);
+    if (whisper) {
+      return {
+        type: "trade_whisper",
+        timestamp,
+        raw: line,
+        data: { direction: whisper[1], player: whisper[2], message: whisper[3], untrusted: true },
+      };
+    }
+    return { type: "player_message", timestamp, raw: line, data: { message, untrusted: true } };
+  }
 
   for (const pattern of PATTERNS) {
-    const m = line.match(pattern.regex);
+    const m = message.match(pattern.regex);
     if (m) {
       return { type: pattern.type, timestamp, raw: line, data: pattern.extract(m) };
     }
@@ -142,6 +166,10 @@ export class ClientLogTailer {
     }
     if (opts.types && opts.types.length > 0) {
       filtered = filtered.filter((e) => opts.types!.includes(e.type));
+    } else {
+      // Raw lines can contain private or noisy Client.txt content. They are
+      // available only when the caller explicitly asks for raw_unmatched.
+      filtered = filtered.filter((e) => e.type !== "raw_unmatched");
     }
     const limit = opts.limit ?? 50;
     return filtered.slice(-limit);

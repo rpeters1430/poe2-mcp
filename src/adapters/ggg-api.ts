@@ -2,6 +2,7 @@ import { GGG_API_BASE, GGG_REALM, userAgent } from "../config.js";
 import { getAccessToken } from "./ggg-oauth.js";
 import { resolveNodeNames } from "./tree-data.js";
 import type { CharacterState, InventoryItem, InventorySnapshot, ItemProperty, PassiveTreeSnapshot } from "../types.js";
+import { normalizeEquipmentSlot } from "../build/slots.js";
 
 /**
  * Thin client for the parts of GGG's official API this server uses:
@@ -109,7 +110,7 @@ function toItemProperties(item: RawItem): ItemProperty[] {
 
 function toInventoryItem(item: RawItem): InventoryItem {
   return {
-    slot: item.inventoryId ?? null,
+    slot: normalizeEquipmentSlot(item.inventoryId),
     name: item.name && item.name.length > 0 ? item.name : item.typeLine ?? "Unknown",
     baseType: item.baseType ?? item.typeLine ?? "Unknown",
     rarity: item.rarity ?? null,

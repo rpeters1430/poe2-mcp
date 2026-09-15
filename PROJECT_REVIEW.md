@@ -1,7 +1,9 @@
 # poe2-mcp full project review
 
 Reviewed: 2026-09-15  
-Reviewed commit: `145270d43ae2f78bd2e6533e3ffcf82ae53132fd` (`main`)  
+Canonical review: this file supersedes `poe2-mcp-review.md` and `poe2_mcp_review.md`.
+
+Reviewed runtime commit: `145270d43ae2f78bd2e6533e3ffcf82ae53132fd`; reconciled on `db00d32e3ff452b6374df1c799b66f84abb8e6c6` (`main`).
 Scope: all tracked source, tests, configuration, examples, documentation, package contents, repository automation, and open repository items.
 
 ## Executive summary
@@ -22,12 +24,28 @@ Recommendation: complete the P0 items before adding more data sources. Then fix 
 
 - `npm ci`: passed.
 - `npm run build`: passed with TypeScript strict mode.
-- Tests: all 37 passed using `node --import tsx --test src/adapters/tree-data.test.ts src/build/*.test.ts`.
+- Tests: the original 37 passed; milestone one expands the suite to 50 passing tests using `node --import tsx --test src/adapters/*.test.ts src/build/*.test.ts`.
 - `npm audit --json`: 0 known vulnerabilities across the installed dependency graph.
-- `npm pack --dry-run`: package builds a 104.4 kB tarball containing 88 files, including all source/tests/maps and both generated `dist` files.
+- `npm pack --dry-run`: milestone one builds a 124.7 kB tarball containing 96 files, including all source/tests/maps and both generated `dist` files; package trimming remains a P2 item.
 - GitHub: no project-owned `.github/workflows` files; no open PRs; only the Renovate Dependency Dashboard is open.
 
 The configured `npm test` command could not run in the review sandbox because the `tsx` CLI could not create its IPC pipe (`EPERM`). Running the same tests through Node's test runner and the `tsx` import hook passed. This is an environment/runner portability problem worth eliminating, not a failed product test.
+
+## Reconciliation notes
+
+This document was reconciled from all three reviews formerly in the repository. Findings were retained only when supported by the current code or clearly labeled as requiring a real PoE2 fixture. The short `poe2_mcp_review.md` was not treated as authoritative because it incorrectly claimed that the log was not tailed, OAuth tokens were not refreshed, malformed share codes lacked error handling, and `memory-adapter.ts` provided caching. The larger `poe2-mcp-review.md` contained useful additional findings that are incorporated below.
+
+## Implementation status
+
+| Item | Status |
+|---|---|
+| Restrict local PoB file reads to the configured Builds directory | Implemented in milestone-one PR |
+| Remove generic URL imports and validate redirects | Implemented in milestone-one PR |
+| Add PoB input/download/decompression limits | Implemented in milestone-one PR |
+| Prevent explicit-character requests from using an unrelated active build | Implemented in milestone-one PR |
+| Prevent chat/whispers from spoofing system events; hide raw events by default | Implemented in milestone-one PR |
+| Normalize PoB/GGG slots and exclude swap/flask/charm slots from active totals | Implemented in milestone-one PR |
+| Add build/test/audit/package CI on Node 20/22/24 | Implemented in milestone-one PR |
 
 ## Priority definitions
 
@@ -254,6 +272,48 @@ Large state, cache, directory, and build reads/writes block every tool. Move req
 
 PoB process detection uses substring matching over `tasklist`/`ps -A`; path candidates omit several library/custom-folder cases. A `doctor` command with explicit discovery results is preferable to silently guessing.
 
+### Additional reconciled findings
+
+#### 27. PoB and GGG equipment slots need one canonical model — P1
+
+PoB labels such as `Helmet`, `Body Armour`, `Ring 1`, and `Weapon 1` do not reliably match GGG-style labels such as `Helm`, `BodyArmour`, `Ring`, and `Weapon`. Exact string matching can fail to find/remove the equipped item during comparison and then add the candidate on top of the old item. Add a canonical slot enum and normalize at every adapter and tool boundary.
+
+#### 28. Inactive weapon sets, flasks, and charms can pollute totals — P1
+
+Defense aggregation loops over all equipment and offense accepts any slot beginning with `weapon`. Normalize slots, identify the active weapon set, and limit each calculation to slots that contribute to that calculation. Add separate weapon-set comparison when desired.
+
+#### 29. Chat can spoof game events — P0
+
+System regexes were matched against the entire line before chat was classified. A whisper ending in “has been slain” or containing “You have entered” could be interpreted as real state. Parse the log prefix and channel first, anchor system-message patterns, and mark all chat payloads as untrusted third-party text.
+
+#### 30. Raw log noise can evict session history — P1
+
+Recognized events and `raw_unmatched` lines share the same 500-entry ring, while session totals are recomputed from that ring. Keep raw diagnostics separate and opt-in; maintain session counters independently so debug noise cannot erase deaths/areas from the summary.
+
+#### 31. PoE2 terminology and hybrid mods need fixtures — P1, verify against live data
+
+The parser mainly recognizes “Critical Strike” wording, simple integer affixes, and single-stat lines. Verify real PoE2 forms such as “Critical Hit,” hybrid resistances/attributes, Spirit, maximum resistances, roll ranges, rune/implicit/crafted suffixes, and PoB `{tag}` prefixes. Normalize formatting before pattern matching and publish a recognition-confidence count.
+
+#### 32. Elemental weapon properties may use a multi-value representation — P1, verify against live data
+
+Offense looks for separate `Fire Damage`, `Cold Damage`, and `Lightning Damage` properties and `propertyRange` reads only the first value. Add sanitized GGG/clipboard fixtures and support the actual multi-value `Elemental Damage` representation if confirmed.
+
+#### 33. PoB fallback invents unknown character fields — P1
+
+Fallback conversion uses a class name as a character name and substitutes `level: 1`, `experience: 0`, and `hardcore: false` when values are unknown; parsed skill groups are dropped from the inventory shape. Model unknown values as nullable and preserve source identity/skills instead of manufacturing facts.
+
+#### 34. Tool results are larger than necessary — P2
+
+Full pretty-printed builds, duplicated passive hashes/resolutions, and an arbitrary `playerStats.slice(0, 30)` consume model context without guaranteeing the important stats are present. Return compact summaries by default, support explicit detail levels, and select PoB stats by stable names.
+
+#### 35. Time filtering should compare instants, not strings — P2
+
+`sinceIso` currently uses lexicographic comparison. Parse and compare epoch values so future acceptance of valid timezone offsets or different precision cannot silently break filtering.
+
+#### 36. PoB process detection is fragile — P2
+
+`ps -A` output can truncate or omit the full command name and Wine/Proton executable names differ. Use full command lines (`ps -eo args`) and normalized candidate names, while continuing to report detection as best-effort.
+
 ## Ranked feature roadmap
 
 | Rank | Priority | Feature | Value | Key dependency |
@@ -273,6 +333,12 @@ PoB process detection uses substring matching over `tasklist`/`ps -A`; path cand
 | 13 | P3 | Real overlay companion | A small opt-in overlay that acknowledges messages, honors TTL, deduplicates/rate-limits, and never sends game input. | Advisory hardening. |
 | 14 | P3 | Sanitized diagnostic bundle | Export configuration shape, versions, recent structured errors, and parser coverage without tokens, full paths, raw chat, or build secrets. | Redaction framework. |
 | 15 | P3 | Optional local HTTP transport | Useful for containers/remote clients only with loopback default, authentication, origin/host validation, TLS guidance, and an explicit threat model. | Finish all P0 security work first. |
+| 16 | P2 | Headless PoB calculation | Load builds and calculate real item/build deltas through PoB's supported headless path instead of approximating DPS/EHP. | Secure process execution and real fixtures. |
+| 17 | P2 | Structured trade whispers | Parse item, price, currency, league, stash, and position while preserving an `untrusted` marker. | Correct chat classification and privacy controls. |
+| 18 | P2 | PoE2 game-data layer | Use a maintained data export for base types, slot classes, modifier tiers, and local/global semantics. | Source licensing, patch versioning, and cache validation. |
+| 19 | P3 | MCP prompt templates | Provide `review-my-build`, `why-did-i-die`, and `should-i-buy-this-item` workflows that call the right tools. | Stable typed tool outputs. |
+| 20 | P3 | Crafting-analysis integration | Add affix weights and crafting simulations only through an authorized/stable data source; do not scrape fragile pages. | Game-data layer and source terms review. |
+| 21 | P3 | Container packaging | Provide a hardened container for non-log use or explicitly mounted game/build paths; document why local desktop integrations need extra configuration. | Release-safe npm packaging and least-privilege mounts. |
 
 ## Recommended implementation order
 
@@ -311,4 +377,3 @@ Start with `doctor`, active-build controls/watching, build confidence, and unifi
 - A packed tarball installs and both CLI bins run in a clean environment.
 - Renovate automerge requires successful checks.
 - The README documents permissions, privacy, threat model, source precedence, and recovery steps.
-

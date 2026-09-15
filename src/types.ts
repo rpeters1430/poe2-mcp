@@ -279,14 +279,14 @@ export interface GameEvent {
   /** The original, unmodified log line this event was parsed from. */
   raw: string;
   /** Type-specific structured fields, e.g. { area: "Riverbank" } or { level: 12 }. */
-  data: Record<string, string | number | null>;
+  data: Record<string, string | number | boolean | null>;
 }
 
 export interface RecentEventsSnapshot {
   source: "client_log";
   queriedAt: string;
-  /** Absolute path of the log file that was tailed. */
-  logPath: string;
+  /** Whether a Client.txt path was resolved, without exposing the local absolute path. */
+  logAvailable: boolean;
   events: GameEvent[];
 }
 
