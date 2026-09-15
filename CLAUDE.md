@@ -151,20 +151,22 @@ missing, same transparency pattern as the two adapters above:
 build) to names/stats, by fetching GGG's own official PoE2 tree export
 (`github.com/grindinggear/poe2-skilltree-export`'s `data.json`) and caching
 it to `configDir()/tree-data-cache.json` for 24h (patch-versioned data, not
-per-request). **The exact field names it reads (`name`/`dn`, `isKeystone`/
-`ks`, `isNotable`/`not`, `isMastery`/`m`, `stats`/`sd`) are inferred from the
-long-documented PoE1 sibling export's schema, not verified against a live
-fetch** — every `pathofexile.com`/`poewiki`/`fandom` domain was unreachable
-from this project's own dev sandbox while writing this file, and the actual
-`data.json` is ~5MB, too large to fully inspect through a web-content-
-summarizing tool. `resolveNodeNames` never throws and always returns one
-entry per input hash (with `name: null` for anything unresolved) so the raw
-id is never lost — same "best-effort, verify against reality, fix the
-candidate list in place" pattern as `client-log.ts`'s `PATTERNS` or `pob.ts`'s
-candidate process names. **If resolution comes back empty or wrong against a
-real fetch, that's expected until someone checks the real `data.json` shape
-and fixes the field candidates in `tree-data.ts`** — treat that as the next
-concrete task here, not a sign the approach is wrong.
+per-request). The schema was verified against a live fetch of the real
+`data.json` (~5MB, 5153 nodes as of writing): `nodes` is keyed by node id as
+a string, matching the same id space as GGG's `passives.hashes` and PoB2's
+`<Spec nodes="...">` (no translation needed), and a node's real fields are
+`name` (display name -- the inner `id` field is a machine slug, not the
+display name), `isKeystone`/`isNotable`/`isMastery` (booleans, present only
+on nodes of that type), `stats` (raw description lines), and `ascendancyId`
+(a slug like `"Ranger3"` -- base class + ascendancy slot number, NOT the
+ascendancy's flavor name like "Deadeye"; there's no slot-to-flavor-name
+mapping in this dataset yet). `resolveNodeNames` still tries a couple of
+alternate key spellings per field (PoE1's older `dn`/`ks`/`not`/`m`
+abbreviations) in case a future patch changes the schema, never throws, and
+always returns one entry per input hash (with `name: null` for anything
+unresolved) so the raw id is never lost — same "best-effort, verify against
+reality, fix in place" pattern as `client-log.ts`'s `PATTERNS` or `pob.ts`'s
+candidate process names.
 
 **Path of Building 2 import** (`src/adapters/pob.ts`, `src/build/pob-decode.ts`,
 `src/build/pob-parser.ts`) is an alternative build-data source to the GGG API

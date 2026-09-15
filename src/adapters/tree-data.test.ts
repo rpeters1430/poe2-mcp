@@ -45,7 +45,7 @@ test("degrades gracefully to name: null for every id when the fetch fails and no
   try {
     const result = await resolveNodeNames([111]);
     assert.deepEqual(result.resolvedNodes, [
-      { id: 111, name: null, isKeystone: false, isNotable: false, isMastery: false, ascendancyName: null, stats: [] },
+      { id: 111, name: null, isKeystone: false, isNotable: false, isMastery: false, ascendancyId: null, stats: [] },
     ]);
     assert.match(result.note, /Could not resolve node names/);
   } finally {
@@ -61,7 +61,7 @@ test("resolves both 'dn'/'not' and 'name'/'isKeystone' field spellings", async (
     isKeystone: false,
     isNotable: true,
     isMastery: false,
-    ascendancyName: null,
+    ascendancyId: null,
     stats: ["+10% increased Melee Physical Damage"],
   });
   assert.deepEqual(result.resolvedNodes[1], {
@@ -70,7 +70,7 @@ test("resolves both 'dn'/'not' and 'name'/'isKeystone' field spellings", async (
     isKeystone: true,
     isNotable: false,
     isMastery: false,
-    ascendancyName: null,
+    ascendancyId: null,
     stats: ["Golems have 40% increased Buff Effect"],
   });
 });
@@ -78,7 +78,7 @@ test("resolves both 'dn'/'not' and 'name'/'isKeystone' field spellings", async (
 test("keeps the raw id with name: null for an id not present in the dataset", async () => {
   const result = await withFakeFetch(FAKE_TREE_DATA, () => resolveNodeNames([999]));
   assert.deepEqual(result.resolvedNodes, [
-    { id: 999, name: null, isKeystone: false, isNotable: false, isMastery: false, ascendancyName: null, stats: [] },
+    { id: 999, name: null, isKeystone: false, isNotable: false, isMastery: false, ascendancyId: null, stats: [] },
   ]);
   assert.match(result.note, /1 of 1 node id\(s\) had no match/);
 });

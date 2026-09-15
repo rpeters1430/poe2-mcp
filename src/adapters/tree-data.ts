@@ -8,25 +8,35 @@ import type { ResolvedPassiveNode } from "../types.js";
  * `fetchPassiveTree` in `ggg-api.ts` / `PobPassiveSpec.allocatedNodeIds` from
  * a PoB2 import) to human-readable names/stats, using GGG's own official PoE2
  * tree export: https://github.com/grindinggear/poe2-skilltree-export
- * (data.json). That's the PoE2 sibling of the long-standing, community-
- * documented PoE1 export at github.com/grindinggear/skilltree-export, whose
- * "nodes" object is keyed by node id with fields including id/dn (display
- * name)/icon/stats (or sd)/isKeystone (or ks)/isNotable (or not)/isMastery
- * (or m)/ascendancyName.
+ * (data.json).
  *
- * IMPORTANT: the field names below are inferred from that well-documented
- * PoE1 sibling format, NOT verified against a live fetch of PoE2's actual
- * data.json -- every pathofexile.com/poewiki/fandom domain was unreachable
- * from this project's own dev sandbox (network egress policy) while writing
- * this file, and the file itself is ~5MB, too large to fully inspect through
- * a web-content-summarizing tool. `findNode`'s field lookups try multiple
- * candidate key spellings and always fall through to "not found" rather than
- * throwing, and every resolution result keeps the raw node id regardless of
+ * Schema verified against a live fetch of the real data.json (~5MB, 5153
+ * nodes as of writing). Root keys: tree, classes, groups, nodes, edges,
+ * skillOverrides, jewelSlots, min_x/min_y/max_x/max_y. "nodes" is keyed by
+ * node id as a string (e.g. "52"), which matches the node's own numeric
+ * "skill" field -- this is the same id space as GGG character-API
+ * `passives.hashes` and PoB2's `<Spec nodes="...">` list, so no extra id
+ * translation is needed. A representative node:
+ *   { "id": "passive_keystone_zealots_oath", "skill": 52,
+ *     "name": "Zealot's Oath", "icon": "...", "isKeystone": true,
+ *     "stats": ["Excess Life Recovery ..."], "group": 194, "orbit": 0,
+ *     "orbitIndex": 0, "x": ..., "y": ..., "out": [...], "in": [...] }
+ * The inner "id" is a machine slug (e.g. "passive_keystone_zealots_oath"),
+ * NOT the display name -- use "name" for that. Ascendancy nodes carry
+ * "ascendancyId" (e.g. "Ranger3": base class + ascendancy slot number, NOT
+ * the ascendancy's flavor name like "Deadeye" -- there's no slot-to-flavor-
+ * name mapping in this dataset). Boolean flags (isKeystone/isNotable/
+ * isMastery) are omitted entirely on nodes that aren't that type, rather than
+ * present-and-false.
+ *
+ * `findNode`'s field lookups still try a couple of alternate key spellings
+ * (this export's schema has changed under GGG before, e.g. PoE1's older
+ * dn/ks/not/m abbreviations) and always fall through to "not found" rather
+ * than throwing; every resolution result keeps the raw node id regardless of
  * whether a name was found -- same "best-effort, verify against reality, fix
- * the candidate list in place" pattern as `client-log.ts`'s PATTERNS or
- * `pob.ts`'s candidate process names. If resolution comes back empty or wrong
- * against a real fetch, log what `data.json` actually looks like and adjust
- * the field candidates here.
+ * in place" pattern as `client-log.ts`'s PATTERNS or `pob.ts`'s candidate
+ * process names. If a future patch changes the schema and resolution starts
+ * coming back empty, re-fetch data.json and adjust the field candidates here.
  */
 
 const TREE_DATA_URL =
@@ -142,7 +152,7 @@ function findNode(data: RawTreeData, id: number): RawTreeNode | null {
 }
 
 function emptyResolution(id: number): ResolvedPassiveNode {
-  return { id, name: null, isKeystone: false, isNotable: false, isMastery: false, ascendancyName: null, stats: [] };
+  return { id, name: null, isKeystone: false, isNotable: false, isMastery: false, ascendancyId: null, stats: [] };
 }
 
 export interface TreeDataResolution {
@@ -177,7 +187,7 @@ export async function resolveNodeNames(nodeIds: number[]): Promise<TreeDataResol
       isKeystone: firstBoolean(node, ["isKeystone", "ks"]),
       isNotable: firstBoolean(node, ["isNotable", "not"]),
       isMastery: firstBoolean(node, ["isMastery", "m"]),
-      ascendancyName: firstString(node, ["ascendancyName"]),
+      ascendancyId: firstString(node, ["ascendancyId", "ascendancyName"]),
       stats: statLines(node),
     };
   });
@@ -186,9 +196,7 @@ export async function resolveNodeNames(nodeIds: number[]): Promise<TreeDataResol
   return {
     resolvedNodes,
     note:
-      `Resolved via GGG's official PoE2 tree export (cached from ${TREE_DATA_URL}, fetched ${envelope.fetchedAt}); ` +
-      "the field names this adapter reads were not verified against a live fetch in development -- see the file-" +
-      "level comment in tree-data.ts if resolution looks wrong. " +
+      `Resolved via GGG's official PoE2 tree export (cached from ${TREE_DATA_URL}, fetched ${envelope.fetchedAt}). ` +
       (unresolvedCount > 0
         ? `${unresolvedCount} of ${nodeIds.length} node id(s) had no match in the dataset -- possibly a stale ` +
           "cache after a patch, or a node this adapter's field-name guesses don't cover yet."

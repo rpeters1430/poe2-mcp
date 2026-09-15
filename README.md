@@ -170,17 +170,20 @@ build or not build.
 `src/adapters/tree-data.ts` resolves the raw allocated passive node hashes
 `get_passive_tree` returns to names/stats, using GGG's own official PoE2 tree
 export (`github.com/grindinggear/poe2-skilltree-export`'s `data.json`),
-cached locally for 24h since it's patch-versioned data, not per-request. The
-exact field names it reads were inferred from the long-documented PoE1
-sibling export's schema, not verified against a live fetch of the real
-~5MB PoE2 `data.json` (every `pathofexile.com`/wiki domain was unreachable
-while writing this feature, and the file itself is too large to fully
-inspect through a summarizing tool) — same caveat as the PoB2 schema notes
-below. `resolveNodeNames` never throws and always returns one entry per
-allocated hash (with `name: null` for anything it can't resolve), so the raw
-hash is never lost even if a name lookup fails or the field names turn out
-to be wrong; if resolution looks empty or off, check the real `data.json`
-shape and adjust the field candidates in `tree-data.ts`.
+cached locally for 24h since it's patch-versioned data, not per-request. This
+works entirely independently of the GGG developer API/client ID: it's a
+public, unauthenticated file, so it resolves node names for
+`import_pob_build`/`import_poe_ninja_character` builds too, not just
+`get_passive_tree` via the GGG API path. The schema was verified against a
+live fetch of the real ~5MB `data.json`: nodes are keyed by id in the same
+id space as `passives.hashes`/PoB2's `<Spec nodes="...">`, with real fields
+`name`, `isKeystone`/`isNotable`/`isMastery`, `stats`, and `ascendancyId` (a
+slug like `"Ranger3"`, not the ascendancy's flavor name like "Deadeye" —
+this project doesn't map slot-to-flavor-name yet). `resolveNodeNames` never
+throws and always returns one entry per allocated hash (with `name: null`
+for anything it can't resolve), so the raw hash is never lost even if a
+future patch changes the schema; if resolution starts coming back empty,
+re-fetch `data.json` and check the field candidates in `tree-data.ts`.
 
 ## A note on the Path of Building 2 tools
 

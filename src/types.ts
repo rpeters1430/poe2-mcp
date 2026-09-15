@@ -87,8 +87,13 @@ export interface ResolvedPassiveNode {
   isKeystone: boolean;
   isNotable: boolean;
   isMastery: boolean;
-  /** Set when this node belongs to a specific ascendancy class, e.g. "Infernalist". */
-  ascendancyName: string | null;
+  /**
+   * Set when this node belongs to a specific ascendancy class -- a slug like
+   * "Ranger3" (base class + ascendancy slot number, per GGG's official tree
+   * export), NOT the ascendancy's flavor display name (e.g. "Deadeye"). This
+   * project has no ascendancy-slot-to-display-name mapping yet.
+   */
+  ascendancyId: string | null;
   /** Raw stat description lines for this node, unparsed (same philosophy as InventoryItem.mods). */
   stats: string[];
 }
