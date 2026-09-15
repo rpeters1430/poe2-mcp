@@ -128,6 +128,105 @@ In all three cases, fill in the real absolute path to `dist/index.js` and
 your actual `POE2_GGG_CLIENT_ID`/`POE2_CONTACT_EMAIL` — none of the example
 files above are usable verbatim.
 
+## Remote access: Docker, web dashboard, and clipboard-to-compare
+
+Everything above launches the server as a **local stdio subprocess** on the
+same machine as PoE2. If you'd rather run PoE2 and this server on your
+**desktop** and interact from a **laptop** over your LAN — a browser
+dashboard, and/or a remote AI CLI — use `src/serve.ts` instead of
+`src/index.ts`. It exposes the exact same MCP tool surface at `/mcp`
+(over `StreamableHTTPServerTransport` instead of stdio), plus a small REST
+API and a browser dashboard at `/`. See PROTOCOL.md's "Interaction model"
+for how this relates to the stdio-only design: the AI's MCP interaction is
+still pull-only either way, this only changes the transport and adds a
+separate human-facing dashboard alongside it.
+
+### Run it (native, no Docker)
+
+```sh
+npm run build
+POE2_GGG_CLIENT_ID=... POE2_CONTACT_EMAIL=... npm run start:serve
+```
+
+Then open `http://localhost:8787/` (or `http://<desktop-ip>:8787/` from
+another machine on your LAN) for the dashboard.
+
+### Run it as a Docker image, on the desktop with the game
+
+```sh
+docker build -t poe2-mcp-server .
+```
+
+**Before running the container**, do the one-time GGG OAuth flow *outside*
+Docker (`npm run auth` — see Setup step 3 above), on the desktop. This
+writes `tokens.json` under `~/.config/poe2-mcp-server`, which the container
+then reads via a bind mount — simpler than trying to complete GGG's
+loopback OAuth redirect against a port published from inside a container.
+
+Create a `.env` file next to `docker-compose.yml` with:
+
+```sh
+POE2_GGG_CLIENT_ID=...
+POE2_CONTACT_EMAIL=...
+POE2_WEB_TOKEN=pick-a-long-random-string   # see "A note on exposure" below
+POE2_CONFIG_DIR_HOST=C:\Users\you\.config\poe2-mcp-server
+POE2_CLIENT_LOG_DIR_HOST=C:\Program Files (x86)\Steam\steamapps\common\Path of Exile 2\logs
+POE2_POB_BUILDS_DIR_HOST=C:\Users\you\Documents\Path of Building (PoE2)\Builds
+```
+
+then:
+
+```sh
+docker compose up -d
+```
+
+**Important**: `src/config.ts`'s auto-detection of `Client.txt`/PoB2 paths
+is gated on the *container's* platform (`linux`), not the Windows host's —
+those Windows candidate paths never match inside a Linux container even
+though the mounted files are Windows-authored. `docker-compose.yml` already
+sets `POE2_CLIENT_LOG_PATH`/`POE2_POB_BUILDS_PATH` explicitly to the
+in-container mount points so this isn't an issue as long as the three
+`*_HOST` paths in your `.env` are correct. Windows Defender Firewall will
+likely prompt to allow inbound connections the first time the container
+listens on the published port — allow it for your local network.
+
+### Clipboard → compare, automatically
+
+`src/clipboard-watcher.ts` runs **natively on the Windows desktop, never in
+Docker** — a container can't see the Windows clipboard even under Docker
+Desktop's WSL2 backend. On the desktop (same machine as PoE2):
+
+```sh
+POE2_SERVE_URL=http://127.0.0.1:8787 npm run watch-clipboard
+```
+
+It polls the clipboard, and when it sees text starting with `Item Class:`
+(PoE2's Ctrl+C item-text format) it pushes it to the server, which
+broadcasts it over a websocket to any open dashboard tab — the Compare
+panel auto-fills and re-runs the comparison. Copy an item in-game and it
+just shows up; no manual paste needed. This is a browser-UI convenience
+only, not a channel to the AI (see PROTOCOL.md).
+
+### Remote AI CLI over the network
+
+Once `serve.ts` is running, add it as a remote MCP server from your laptop
+instead of a local subprocess. For Claude Code, an HTTP-type server entry
+pointing at `http://<desktop-ip>:8787/mcp` (with header
+`X-POE2-Token: <your POE2_WEB_TOKEN>` if you set one); consult your CLI's
+docs for the exact remote-MCP-server syntax, since this differs from the
+stdio `claude mcp add ...` form used above.
+
+### A note on exposure
+
+This server holds your GGG OAuth tokens and can trigger desktop
+notifications/TTS on the desktop it runs on. Once it's reachable beyond
+`localhost` (LAN access from your laptop, or a published Docker port),
+anything else on that network can reach `/api`, `/ws`, and `/mcp` too. Set
+`POE2_WEB_TOKEN` to a long random string (checked via an `X-POE2-Token`
+header, or a `?token=` query param for the dashboard/websocket) unless
+you're certain you trust everything on your LAN. Don't expose this port
+past your home network/router.
+
 ## Tools exposed
 
 | Tool | Direction | Summary |

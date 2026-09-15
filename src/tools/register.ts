@@ -2,17 +2,7 @@ import { z } from "zod";
 import fs from "node:fs";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ClientLogTailer } from "../adapters/client-log.js";
-import {
-  fetchCharacterState,
-  fetchInventorySnapshot,
-  fetchPassiveTree,
-  listCharacterNames,
-} from "../adapters/ggg-api.js";
-import { getActiveCharacter, setActiveCharacter } from "../adapters/active-character.js";
-import { computeDefenses } from "../build/defenses.js";
-import { computeOffenseStats } from "../build/offense.js";
-import { parseItemText } from "../build/item-text.js";
-import { compareItem } from "../build/compare.js";
+import { fetchCharacterState, fetchInventorySnapshot, listCharacterNames } from "../adapters/ggg-api.js";
 import { isPobRunning, listRecentPobBuilds, readPobBuildFile, validatePobBuildFile } from "../adapters/pob.js";
 import { resolveAccountName, saveAccountName, resolvePobBuildsDir } from "../config.js";
 import { resolvePobXml } from "../build/pob-decode.js";
@@ -27,14 +17,14 @@ import {
 import {
   saveActiveBuild,
   resolveActiveBuildRecord,
-  getActiveBuildStatus,
   refreshActiveBuild,
   clearActiveBuild,
+  getActiveBuildStatus,
   pobBuildToInventorySnapshot,
-  pobBuildToPassiveTree,
-  pobBuildToCharacterState,
 } from "../adapters/active-build.js";
 import { findTradeUpgrades } from "../adapters/trade.js";
+import * as handlers from "./handlers.js";
+import { activeBuildContext, resolveCharacterName } from "./handlers.js";
 
 function jsonResult(data: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] };
@@ -43,17 +33,6 @@ function jsonResult(data: unknown) {
 function errorResult(err: unknown) {
   const message = err instanceof Error ? err.message : String(err);
   return { content: [{ type: "text" as const, text: `Error: ${message}` }], isError: true };
-}
-
-function activeBuildContext(record: ActiveBuildRecord) {
-  const ageMs = Math.max(0, Date.now() - Date.parse(record.refreshedAt));
-  return {
-    origin: record.origin,
-    pinned: record.pinned,
-    refreshedAt: record.refreshedAt,
-    ageMs,
-    identity: record.identity,
-  };
 }
 
 const eventTypeEnum = z.enum([
@@ -65,15 +44,6 @@ const eventTypeEnum = z.enum([
   "instance_created",
   "raw_unmatched",
 ]);
-
-async function resolveCharacterName(explicit: string | undefined, log: ClientLogTailer): Promise<string> {
-  if (explicit) return explicit;
-  const active = await getActiveCharacter(log);
-  if (!active.name) {
-    throw new Error(active.message ?? "No active character set. Call set_active_character or pass characterName.");
-  }
-  return active.name;
-}
 
 export function registerTools(server: McpServer, log: ClientLogTailer): void {
   // ---- Read-only game-state tools (server -> AI) ----------------------
@@ -135,19 +105,8 @@ export function registerTools(server: McpServer, log: ClientLogTailer): void {
     },
     async ({ characterName }) => {
       try {
-        return jsonResult(await fetchCharacterState(characterName));
+        return jsonResult(await handlers.getCharacterState(characterName));
       } catch (err) {
-        const account = resolveAccountName();
-        if (account) {
-          try {
-            const chars = await fetchNinjaCharacters(account);
-            const found = chars.find((c) => c.name.toLowerCase() === characterName.toLowerCase());
-            if (found) {
-              const build = await fetchNinjaAsPobBuild(account, found.leagueUrl, found.name);
-              return jsonResult(pobBuildToCharacterState(build, found.name));
-            }
-          } catch {}
-        }
         return errorResult(err);
       }
     }
@@ -163,22 +122,11 @@ export function registerTools(server: McpServer, log: ClientLogTailer): void {
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async ({ characterName }) => {
-      let primaryError: unknown;
       try {
-        const name = await resolveCharacterName(characterName, log);
-        return jsonResult(await fetchInventorySnapshot(name));
+        return jsonResult(await handlers.getInventory(characterName, log));
       } catch (err) {
-        primaryError = err;
+        return errorResult(err);
       }
-      if (characterName) return errorResult(primaryError);
-      const active = await resolveActiveBuildRecord();
-      if (active) {
-        return jsonResult({
-          ...pobBuildToInventorySnapshot(active.build, active.identity.characterName ?? undefined),
-          activeBuild: activeBuildContext(active),
-        });
-      }
-      return errorResult(primaryError);
     }
   );
 
@@ -194,7 +142,7 @@ export function registerTools(server: McpServer, log: ClientLogTailer): void {
       inputSchema: {},
       annotations: { readOnlyHint: true },
     },
-    async () => jsonResult(await getActiveCharacter(log))
+    async () => jsonResult(await handlers.getCurrentCharacter(log))
   );
 
   server.registerTool(
@@ -209,24 +157,7 @@ export function registerTools(server: McpServer, log: ClientLogTailer): void {
     },
     async ({ characterName }) => {
       try {
-        let names: string[];
-        try {
-          names = await listCharacterNames();
-        } catch {
-          const account = resolveAccountName();
-          if (account) {
-            const ninjaChars = await fetchNinjaCharacters(account);
-            names = ninjaChars.map((c) => c.name);
-          } else {
-            names = [characterName];
-          }
-        }
-        if (!names.includes(characterName)) {
-          return errorResult(
-            new Error(`"${characterName}" is not one of this account's characters: ${names.join(", ")}`)
-          );
-        }
-        return jsonResult(setActiveCharacter(characterName));
+        return jsonResult(await handlers.setActiveCharacter(characterName));
       } catch (err) {
         return errorResult(err);
       }
@@ -244,7 +175,7 @@ export function registerTools(server: McpServer, log: ClientLogTailer): void {
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async () => {
-      try { return jsonResult(await getActiveBuildStatus()); }
+      try { return jsonResult(await handlers.getActiveBuildStatus()); }
       catch (err) { return errorResult(err); }
     }
   );
@@ -294,17 +225,8 @@ export function registerTools(server: McpServer, log: ClientLogTailer): void {
     },
     async ({ characterName }) => {
       try {
-        const name = await resolveCharacterName(characterName, log);
-        return jsonResult(await fetchPassiveTree(name));
+        return jsonResult(await handlers.getPassiveTree(characterName, log));
       } catch (err) {
-        if (characterName) return errorResult(err);
-        const active = await resolveActiveBuildRecord();
-        if (active) {
-          return jsonResult({
-            ...await pobBuildToPassiveTree(active.build, active.identity.characterName ?? undefined),
-            activeBuild: activeBuildContext(active),
-          });
-        }
         return errorResult(err);
       }
     }
@@ -324,22 +246,8 @@ export function registerTools(server: McpServer, log: ClientLogTailer): void {
     },
     async ({ characterName }) => {
       try {
-        const name = await resolveCharacterName(characterName, log);
-        return jsonResult(computeDefenses(await fetchInventorySnapshot(name)));
+        return jsonResult(await handlers.getDefenses(characterName, log));
       } catch (err) {
-        if (characterName) return errorResult(err);
-        const active = await resolveActiveBuildRecord();
-        if (active) {
-          const inventory = pobBuildToInventorySnapshot(active.build, active.identity.characterName ?? undefined);
-          const computed = computeDefenses(inventory);
-          return jsonResult({
-            ...computed,
-            pobComputedStats: active.build.playerStats?.slice(0, 30),
-            activeBuild: activeBuildContext(active),
-            note:
-              "Computed from active PoB / poe.ninja build. Includes PoB's simulated stats alongside gear-only aggregations.",
-          });
-        }
         return errorResult(err);
       }
     }
@@ -359,17 +267,8 @@ export function registerTools(server: McpServer, log: ClientLogTailer): void {
     },
     async ({ characterName }) => {
       try {
-        const name = await resolveCharacterName(characterName, log);
-        return jsonResult(computeOffenseStats(await fetchInventorySnapshot(name)));
+        return jsonResult(await handlers.getOffenseStats(characterName, log));
       } catch (err) {
-        if (characterName) return errorResult(err);
-        const active = await resolveActiveBuildRecord();
-        if (active) {
-          return jsonResult({
-            ...computeOffenseStats(pobBuildToInventorySnapshot(active.build, active.identity.characterName ?? undefined)),
-            activeBuild: activeBuildContext(active),
-          });
-        }
         return errorResult(err);
       }
     }
@@ -397,26 +296,7 @@ export function registerTools(server: McpServer, log: ClientLogTailer): void {
     },
     async ({ itemText, slot, characterName }) => {
       try {
-        let inventory: InventorySnapshot;
-        try {
-          const name = await resolveCharacterName(characterName, log);
-          inventory = await fetchInventorySnapshot(name);
-        } catch (primaryError) {
-          if (characterName) throw primaryError;
-          const active = await resolveActiveBuildRecord();
-          if (!active) {
-            throw new Error(
-              "No inventory available from GGG API and no active PoB/poe.ninja build found. " +
-                "Import a build using import_pob_build or configure an account with set_account_name."
-            );
-          }
-          inventory = pobBuildToInventorySnapshot(active.build, active.identity.characterName ?? undefined);
-          return jsonResult({
-            ...compareItem(inventory, parseItemText(itemText), slot),
-            activeBuild: activeBuildContext(active),
-          });
-        }
-        return jsonResult(compareItem(inventory, parseItemText(itemText), slot));
+        return jsonResult(await handlers.compareItem(itemText, slot, characterName, log));
       } catch (err) {
         return errorResult(err);
       }
@@ -502,12 +382,7 @@ export function registerTools(server: McpServer, log: ClientLogTailer): void {
       annotations: { readOnlyHint: true },
     },
     async ({ sinceIso, limit, types }) => {
-      return jsonResult({
-        source: "client_log",
-        queriedAt: new Date().toISOString(),
-        logAvailable: log.getLogPath() !== null,
-        events: log.getRecentEvents({ sinceIso, limit, types }),
-      });
+      return jsonResult(handlers.getRecentEvents(log, { sinceIso, limit, types }));
     }
   );
 
@@ -519,7 +394,7 @@ export function registerTools(server: McpServer, log: ClientLogTailer): void {
       inputSchema: {},
       annotations: { readOnlyHint: true },
     },
-    async () => jsonResult(log.getCurrentArea())
+    async () => jsonResult(handlers.getCurrentArea(log))
   );
 
   server.registerTool(
@@ -532,7 +407,7 @@ export function registerTools(server: McpServer, log: ClientLogTailer): void {
       inputSchema: {},
       annotations: { readOnlyHint: true },
     },
-    async () => jsonResult(log.getSessionSummary())
+    async () => jsonResult(handlers.getSessionSummary(log))
   );
 
   // ---- Path of Building 2 import (alternative to the GGG API tools above,

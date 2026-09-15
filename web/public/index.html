@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PoE2 MCP Dashboard</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header>
+    <h1>PoE2 MCP Dashboard</h1>
+    <div id="ws-status" class="badge badge-off">clipboard link: connecting&hellip;</div>
+  </header>
+
+  <main>
+    <section class="panel" id="panel-character">
+      <h2>Character</h2>
+      <div class="row">
+        <input id="character-input" type="text" placeholder="Character name (blank = active character)" />
+        <button id="set-active-btn">Set active</button>
+        <button id="refresh-btn">Refresh</button>
+      </div>
+      <div id="character-summary" class="summary">Loading&hellip;</div>
+      <div class="grid">
+        <div>
+          <h3>Defenses</h3>
+          <div id="defenses-summary" class="summary">&ndash;</div>
+        </div>
+        <div>
+          <h3>Offense</h3>
+          <div id="offense-summary" class="summary">&ndash;</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel" id="panel-events">
+      <h2>Recent events</h2>
+      <ul id="events-list" class="events"></ul>
+    </section>
+
+    <section class="panel" id="panel-compare">
+      <h2>Compare item</h2>
+      <p class="hint">
+        Copy an item in-game (Ctrl+C) on the desktop running the clipboard watcher
+        (<code>npm run watch-clipboard</code>) and it will appear here automatically.
+        You can also paste manually.
+      </p>
+      <textarea id="item-text" rows="8" placeholder="Paste PoE2 item text here&hellip;"></textarea>
+      <div class="row">
+        <input id="slot-input" type="text" placeholder="Slot override (optional, e.g. Ring2)" />
+        <button id="compare-btn">Compare</button>
+      </div>
+      <div id="compare-result"></div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

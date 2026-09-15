@@ -13,6 +13,10 @@
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
     "auth": "tsx src/auth.ts",
+    "serve": "tsx src/serve.ts",
+    "start:serve": "node dist/serve.js",
+    "watch-clipboard": "tsx src/clipboard-watcher.ts",
+    "start:watch-clipboard": "node dist/clipboard-watcher.js",
     "test": "node --import tsx --test src/adapters/*.test.ts src/build/*.test.ts"
   },
   "engines": {
@@ -21,10 +25,12 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
     "fast-xml-parser": "^5.0.0",
+    "ws": "^8.18.0",
     "zod": "^4.0.0"
   },
   "devDependencies": {
     "@types/node": "24.13.4",
+    "@types/ws": "^8.5.0",
     "tsx": "4.23.13",
     "typescript": "7.0.2"
   }

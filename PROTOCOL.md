@@ -217,3 +217,19 @@ the server to proactively flag something like "you just died" without
 being asked, `get_recent_events` already gives an AI running a short polling
 loop everything it needs to notice that itself and call `emit_advisory` —
 no protocol change required.
+
+This still holds for `src/serve.ts`, the optional network-reachable entrypoint
+(README.md's "Remote access" section) that exposes the same MCP tool surface
+over `StreamableHTTPServerTransport` at `/mcp` instead of stdio, for a remote
+AI CLI on another machine. The transport changed, the interaction model
+didn't: the AI at the other end of `/mcp` still only gets state when it asks.
+
+`serve.ts` additionally runs a small REST API (`/api/*`) and a websocket
+(`/ws`) for a companion browser dashboard (`web/public/`) — a separate,
+human-facing surface, not part of the MCP protocol above and not reachable
+by the AI. Its one push mechanism is `src/clipboard-watcher.ts`
+(desktop-only) broadcasting detected PoE2 item text over `/ws` so the
+dashboard's compare-item panel can auto-populate instead of requiring a
+manual paste. That push reaches the *browser*, i.e. the player looking at
+it, exactly like `emit_advisory`'s channels do — it never reaches, and
+cannot reach, the AI's MCP session.
