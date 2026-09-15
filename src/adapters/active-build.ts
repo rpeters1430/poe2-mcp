@@ -11,6 +11,7 @@ import { listRecentPobBuilds, readPobBuildFile } from "./pob.js";
 import { parsePobXml } from "../build/pob-parser.js";
 import { resolvePobXml } from "../build/pob-decode.js";
 import { fetchNinjaAsPobBuild, fetchNinjaCharacters } from "./poe-ninja.js";
+import { resolveNodeNames } from "./tree-data.js";
 
 function activeBuildPath(): string {
   return path.join(configDir(), "active-build.json");
@@ -96,19 +97,21 @@ export function pobBuildToInventorySnapshot(
   };
 }
 
-export function pobBuildToPassiveTree(
+export async function pobBuildToPassiveTree(
   build: PobBuildSnapshot,
   overrideName?: string
-): PassiveTreeSnapshot {
+): Promise<PassiveTreeSnapshot> {
+  const allocatedHashes = build.passiveTree.allocatedNodeIds;
+  const { resolvedNodes, note } = await resolveNodeNames(allocatedHashes);
   return {
     source: (build.source as any) ?? "pob_import",
     fetchedAt: build.importedAt,
     characterName: overrideName ?? build.className ?? "Current Character",
     ascendancyClass: build.ascendClassName,
-    allocatedHashes: build.passiveTree.allocatedNodeIds,
+    allocatedHashes,
+    resolvedNodes,
     jewelData: {},
-    note:
-      "Derived from active PoB / poe.ninja build. Allocated passive node IDs are hashes, not resolved to names.",
+    note: `Derived from active PoB / poe.ninja build. ${note}`,
   };
 }
 

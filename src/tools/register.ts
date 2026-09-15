@@ -238,7 +238,7 @@ export function registerTools(server: McpServer, log: ClientLogTailer): void {
       } catch (err) {
         const active = await resolveActiveBuild();
         if (active) {
-          return jsonResult(pobBuildToPassiveTree(active, characterName));
+          return jsonResult(await pobBuildToPassiveTree(active, characterName));
         }
         return errorResult(err);
       }
