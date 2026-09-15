@@ -253,6 +253,13 @@ point above that item's contribution, requests online listings, compares up to
 10 fetched candidates, and returns `searchUrl` for the official trade page.
 Pass `league` explicitly when the active character/build has no verified
 league identity. Listings can disappear or change price at any time.
+Candidate mods include stats granted by socketed Runes/Soul Cores/Talismans
+(PoE2's trade API represents these as nested `socketedItems`, not a flat mod
+list on the parent item). `slot: "Offhand"` spans four distinct trade
+categories (Shield, Buckler, Focus, Quiver); the tool infers the right one
+from the currently equipped item's base type and reports the resolved
+`category` in `appliedFilters`, falling back to Shield with an explicit
+warning when nothing is equipped or its type can't be determined.
 
 This uses endpoints hosted by GGG's official trade site, but those endpoints
 are not documented in GGG's published developer API. The adapter therefore

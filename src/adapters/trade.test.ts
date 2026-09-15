@@ -129,3 +129,157 @@ test("computes full stat gains against a zero baseline when the slot is empty", 
     resetTradeMetadataCacheForTests();
   }
 });
+
+test("folds socketed rune mods into candidate mods and stat gains", async () => {
+  resetTradeMetadataCacheForTests();
+  const inventory: InventorySnapshot = {
+    source: "pob_import",
+    fetchedAt: new Date().toISOString(),
+    characterName: "Example",
+    skills: [],
+    equipment: [{
+      slot: "Boots", name: "Old Boots", baseType: "Iron Boots", rarity: "Rare", itemLevel: 20,
+      identified: true, corrupted: false, properties: [], mods: [],
+    }],
+  };
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/api/trade2/data/stats")) {
+      return new Response(JSON.stringify({ result: [{ label: "Pseudo", entries: [
+        { id: "pseudo.cold", text: "+#% total to Cold Resistance" },
+      ] }] }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (url.includes("/api/trade2/search/poe2/Standard")) {
+      return new Response(JSON.stringify({ id: "search-id", result: ["listing-id"], total: 1 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (url.includes("/api/trade2/fetch/listing-id?query=search-id")) {
+      // PoE2 gear sockets hold Runes, represented as nested items under
+      // socketedItems rather than a flat mods array on the parent.
+      return new Response(JSON.stringify({ result: [{
+        id: "listing-id",
+        item: {
+          name: "Runed Boots", typeLine: "Iron Boots", baseType: "Iron Boots", rarity: "Rare", ilvl: 40,
+          identified: true, explicitMods: [], properties: [],
+          sockets: [{ group: 0, type: "rune" }],
+          socketedItems: [{ typeLine: "Rune of the Cold", explicitMods: ["+20% to Cold Resistance"] }],
+        },
+        listing: { price: { amount: 1, currency: "exalted" } },
+      }] }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+
+  try {
+    const result = await findTradeUpgrades({
+      inventory,
+      league: "Standard",
+      slot: "Boots",
+      priorities: ["cold_resistance"],
+      maxPrice: 1,
+      currency: "exalted",
+    }) as any;
+
+    assert.deepEqual(result.candidates[0].priorityDeltas, { cold_resistance: 20 });
+    assert.ok(result.candidates[0].mods.includes("+20% to Cold Resistance"));
+  } finally {
+    globalThis.fetch = originalFetch;
+    resetTradeMetadataCacheForTests();
+  }
+});
+
+test("searches the Focus category, not Shield, when a Focus is equipped in the offhand slot", async () => {
+  resetTradeMetadataCacheForTests();
+  const inventory: InventorySnapshot = {
+    source: "pob_import",
+    fetchedAt: new Date().toISOString(),
+    characterName: "Example",
+    skills: [],
+    equipment: [{
+      slot: "Offhand", name: "Old Focus", baseType: "Crystal Focus", rarity: "Rare", itemLevel: 20,
+      identified: true, corrupted: false, properties: [], mods: ["+30 to maximum Life"],
+    }],
+  };
+
+  const originalFetch = globalThis.fetch;
+  let postedQuery: any;
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/api/trade2/data/stats")) {
+      return new Response(JSON.stringify({ result: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (url.includes("/api/trade2/search/poe2/Standard")) {
+      postedQuery = JSON.parse(String(init?.body));
+      return new Response(JSON.stringify({ id: "search-id", result: [], total: 0 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+
+  try {
+    const result = await findTradeUpgrades({
+      inventory,
+      league: "Standard",
+      slot: "Offhand",
+      priorities: ["maximum_life"],
+      maxPrice: 1,
+      currency: "exalted",
+    }) as any;
+
+    assert.equal(postedQuery.query.filters.type_filters.filters.category.option, "armour.focus");
+    assert.equal(result.appliedFilters.category, "armour.focus");
+    assert.doesNotMatch(result.warning ?? "", /off-hand item type/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    resetTradeMetadataCacheForTests();
+  }
+});
+
+test("warns instead of silently searching Shield when the offhand item type can't be determined", async () => {
+  resetTradeMetadataCacheForTests();
+  const inventory: InventorySnapshot = {
+    source: "pob_import",
+    fetchedAt: new Date().toISOString(),
+    characterName: "Example",
+    skills: [],
+    equipment: [],
+  };
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/api/trade2/data/stats")) {
+      return new Response(JSON.stringify({ result: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (url.includes("/api/trade2/search/poe2/Standard")) {
+      return new Response(JSON.stringify({ id: "search-id", result: [], total: 0 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+
+  try {
+    const result = await findTradeUpgrades({
+      inventory,
+      league: "Standard",
+      slot: "Offhand",
+      priorities: ["maximum_life"],
+      maxPrice: 1,
+      currency: "exalted",
+    }) as any;
+
+    assert.equal(result.appliedFilters.category, "armour.shield");
+    assert.match(result.warning, /off-hand item type/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    resetTradeMetadataCacheForTests();
+  }
+});

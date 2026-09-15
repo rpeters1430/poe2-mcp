@@ -43,7 +43,11 @@ interface TradeApiItem {
   explicitMods?: string[];
   craftedMods?: string[];
   fracturedMods?: string[];
-  runeMods?: string[];
+  // PoE2 gear sockets are exclusively for Runes/Soul Cores/Talismans (no gem
+  // sockets, unlike PoE1); the trade API represents them as nested items
+  // under socketedItems, each carrying its own mods -- there is no flat
+  // "runeMods" array on the parent item.
+  socketedItems?: TradeApiItem[];
 }
 interface FetchResult {
   id?: string;
@@ -61,8 +65,31 @@ const SLOT_CATEGORY: Record<FindTradeUpgradesOptions["slot"], string> = {
   Amulet: "accessory.amulet",
   Ring: "accessory.ring",
   Ring2: "accessory.ring",
+  // Default only -- "Offhand" spans four distinct trade categories in PoE2
+  // (Shield, Buckler, Focus, Quiver); resolveOffhandCategory below narrows
+  // this from the currently equipped item's base type when possible.
   Offhand: "armour.shield",
 };
+
+const OFFHAND_CATEGORY_KEYWORDS: Array<{ pattern: RegExp; category: string }> = [
+  { pattern: /\bFocus\b/i, category: "armour.focus" },
+  { pattern: /\bBuckler\b/i, category: "armour.buckler" },
+  { pattern: /\bQuiver\b/i, category: "armour.quiver" },
+  { pattern: /\b(Shield|Targe)\b/i, category: "armour.shield" },
+];
+
+/**
+ * Off hand is the one slot with no single trade category, so pick the
+ * category from the currently equipped item's base type text rather than
+ * defaulting silently -- a caster's Focus upgrade search must not become a
+ * Shield search. Returns null (not the default category) when nothing is
+ * equipped or its base type doesn't match a known off-hand item class, so
+ * the caller can surface that ambiguity instead of hiding it.
+ */
+function resolveOffhandCategory(equipped: InventoryItem | null): string | null {
+  const baseType = equipped?.baseType ?? "";
+  return OFFHAND_CATEGORY_KEYWORDS.find((k) => k.pattern.test(baseType))?.category ?? null;
+}
 
 const PRIORITIES: Record<TradePriority, { stat: string; label: string; fallbackId: string }> = {
   maximum_life: { stat: "maximum_life", label: "total maximum Life", fallbackId: "pseudo.pseudo_total_life" },
@@ -167,9 +194,12 @@ function priorityValues(item: InventoryItem | null, priorities: TradePriority[])
 }
 
 function toParsedItem(item: TradeApiItem): ParsedItemText {
+  const socketedMods = (item.socketedItems ?? []).flatMap((socketed) => [
+    ...(socketed.implicitMods ?? []), ...(socketed.explicitMods ?? []),
+  ]);
   const mods = [
     ...(item.implicitMods ?? []), ...(item.explicitMods ?? []), ...(item.craftedMods ?? []),
-    ...(item.fracturedMods ?? []), ...(item.runeMods ?? []),
+    ...(item.fracturedMods ?? []), ...socketedMods,
   ];
   return {
     name: item.name || item.typeLine || item.baseType || "Trade item",
@@ -195,6 +225,10 @@ export async function findTradeUpgrades(options: FindTradeUpgradesOptions): Prom
     priorities.map((priority) => [priority, Math.max(1, before[priority] + minimumGain)])
   ) as Record<TradePriority, number>;
 
+  const inferredOffhandCategory = options.slot === "Offhand" ? resolveOffhandCategory(equipped) : null;
+  const category = options.slot === "Offhand" ? inferredOffhandCategory ?? SLOT_CATEGORY.Offhand : SLOT_CATEGORY[options.slot];
+  const offhandCategoryUncertain = options.slot === "Offhand" && inferredOffhandCategory === null;
+
   const query = {
     query: {
       status: { option: "online" },
@@ -203,7 +237,7 @@ export async function findTradeUpgrades(options: FindTradeUpgradesOptions): Prom
         filters: priorities.map((priority) => ({ id: statIds[priority], value: { min: appliedMinimums[priority] } })),
       }],
       filters: {
-        type_filters: { filters: { category: { option: SLOT_CATEGORY[options.slot] } } },
+        type_filters: { filters: { category: { option: category } } },
         ...(options.maxRequiredLevel !== undefined
           ? { req_filters: { filters: { lvl: { max: options.maxRequiredLevel } } } }
           : {}),
@@ -225,6 +259,10 @@ export async function findTradeUpgrades(options: FindTradeUpgradesOptions): Prom
   let warning: string | null = fromMetadata
     ? null
     : "Trade stat metadata was unavailable or incomplete; stable pseudo-stat fallback ids were used.";
+  if (offhandCategoryUncertain) {
+    warning = `${warning ? `${warning} ` : ""}Could not determine the off-hand item type (Shield/Buckler/Focus/Quiver) ` +
+      `from the equipped item; defaulted to Shield. Results may not match the intended off-hand category.`;
+  }
   if (ids.length > 0) {
     try {
       const details = await tradeFetch<FetchResponse>(
@@ -271,6 +309,7 @@ export async function findTradeUpgrades(options: FindTradeUpgradesOptions): Prom
     currentItem: equipped ? { name: equipped.name, slot: equipped.slot, priorityValues: before } : null,
     appliedFilters: {
       slot: options.slot,
+      category,
       priorities,
       minimumCandidateValues: appliedMinimums,
       maxPrice: { amount: options.maxPrice, currency: options.currency },
