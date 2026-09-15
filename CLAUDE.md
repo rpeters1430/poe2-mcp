@@ -21,7 +21,7 @@ npm run build   # tsc -p tsconfig.json -> dist/
 npm run dev     # tsx src/index.ts (run the server directly from TS, no build step)
 npm run auth    # tsx src/auth.ts  (one-time interactive GGG OAuth/PKCE flow)
 npm start       # node dist/index.js (run the built server)
-npm test        # tsx --test src/**/*.test.ts (node:test, no build step)
+npm test        # node --import tsx --test src/adapters/*.test.ts src/build/*.test.ts (node:test, no build step)
 ```
 
 Tests are colocated as `src/**/*.test.ts` next to the module they cover (e.g.

@@ -451,6 +451,7 @@ export function registerTools(server: McpServer, log: ClientLogTailer): void {
       try {
         let inventory: InventorySnapshot;
         let resolvedLeague = league;
+        let activeBuild: ActiveBuildRecord | null = null;
         try {
           const name = await resolveCharacterName(characterName, log);
           inventory = await fetchInventorySnapshot(name);
@@ -459,6 +460,7 @@ export function registerTools(server: McpServer, log: ClientLogTailer): void {
           if (characterName) throw primaryError;
           const record = await resolveActiveBuildRecord();
           if (!record) throw primaryError;
+          activeBuild = record;
           inventory = pobBuildToInventorySnapshot(record.build, record.identity.characterName ?? undefined);
           resolvedLeague ??= record.identity.league ?? undefined;
         }
@@ -467,10 +469,15 @@ export function registerTools(server: McpServer, log: ClientLogTailer): void {
             "A league is required because the active build has no verified league identity. Pass league explicitly or import a poe.ninja character."
           );
         }
-        return jsonResult(await findTradeUpgrades({
+        const result = await findTradeUpgrades({
           inventory, league: resolvedLeague, slot, priorities, minimumGain,
           maxPrice, currency, maxRequiredLevel, resultLimit,
-        }));
+        });
+        return jsonResult(
+          activeBuild
+            ? { ...(result as Record<string, unknown>), activeBuild: activeBuildContext(activeBuild) }
+            : result
+        );
       } catch (err) { return errorResult(err); }
     }
   );

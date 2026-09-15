@@ -73,3 +73,59 @@ test("builds and ranks a helmet search for cold resistance, life, budget, and re
     resetTradeMetadataCacheForTests();
   }
 });
+
+test("computes full stat gains against a zero baseline when the slot is empty", async () => {
+  resetTradeMetadataCacheForTests();
+  const inventory: InventorySnapshot = {
+    source: "pob_import",
+    fetchedAt: new Date().toISOString(),
+    characterName: "Example",
+    skills: [],
+    equipment: [],
+  };
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/api/trade2/data/stats")) {
+      return new Response(JSON.stringify({ result: [{ label: "Pseudo", entries: [
+        { id: "pseudo.life", text: "+# total maximum Life" },
+      ] }] }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (url.includes("/api/trade2/search/poe2/Standard")) {
+      return new Response(JSON.stringify({ id: "search-id", result: ["listing-id"], total: 1 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (url.includes("/api/trade2/fetch/listing-id?query=search-id")) {
+      return new Response(JSON.stringify({ result: [{
+        id: "listing-id",
+        item: {
+          name: "Fresh Ring", typeLine: "Iron Ring", baseType: "Iron Ring", rarity: "Rare", ilvl: 40,
+          identified: true, explicitMods: ["+45 to maximum Life"], properties: [],
+        },
+        listing: { price: { amount: 1, currency: "exalted" } },
+      }] }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+
+  try {
+    const result = await findTradeUpgrades({
+      inventory,
+      league: "Standard",
+      slot: "Ring",
+      priorities: ["maximum_life"],
+      maxPrice: 1,
+      currency: "exalted",
+    }) as any;
+
+    assert.equal(result.currentItem, null);
+    assert.deepEqual(result.candidates[0].priorityDeltas, { maximum_life: 45 });
+    assert.equal(result.candidates[0].improvesAllPriorities, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+    resetTradeMetadataCacheForTests();
+  }
+});

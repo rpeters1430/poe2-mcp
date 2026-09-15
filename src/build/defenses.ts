@@ -24,6 +24,9 @@ export function computeDefenses(inventory: InventorySnapshot): DefenseStats {
   let baseArmour = 0;
   let baseEvasion = 0;
   let baseEnergyShield = 0;
+  let globalIncreasedArmourPercent = 0;
+  let globalIncreasedEvasionPercent = 0;
+  let globalIncreasedEnergyShieldPercent = 0;
   let blockChancePercent = 0;
   let fire = 0;
   let cold = 0;
@@ -35,19 +38,28 @@ export function computeDefenses(inventory: InventorySnapshot): DefenseStats {
 
   for (const item of inventory.equipment) {
     if (!contributesToActiveCharacter(item.slot)) continue;
-    baseArmour += propertyNumber(item.properties, "Armour") ?? 0;
-    baseEvasion += propertyNumber(item.properties, "Evasion Rating") ?? 0;
+    const displayedArmour = propertyNumber(item.properties, "Armour");
+    const displayedEvasion = propertyNumber(item.properties, "Evasion Rating");
     const displayedEnergyShield = propertyNumber(item.properties, "Energy Shield");
+    baseArmour += displayedArmour ?? 0;
+    baseEvasion += displayedEvasion ?? 0;
     baseEnergyShield += displayedEnergyShield ?? 0;
     blockChancePercent += propertyNumber(item.properties, "Chance to Block") ?? 0;
 
     const parsed = parseMods(item.mods);
     flatLife += sumStat(parsed, "maximum_life");
     flatMana += sumStat(parsed, "maximum_mana");
-    // Armour pieces report their final local defensive value in properties;
-    // reapplying their flat/% affixes would double count. Flat ES on an item
-    // with no displayed ES property (for example, jewellery) is character-wide.
-    if (displayedEnergyShield === null) baseEnergyShield += sumStat(parsed, "maximum_energy_shield");
+    // A displayed Armour/Evasion/ES property already reflects that item's own
+    // local %-increased affixes, so reapplying them would double count.
+    // Percent/flat defense affixes on an item with no matching displayed
+    // property (for example, jewellery or a belt) have nothing local to
+    // scale and are global bonuses applied to the totals below instead.
+    if (displayedArmour === null) globalIncreasedArmourPercent += sumStat(parsed, "increased_armour_percent");
+    if (displayedEvasion === null) globalIncreasedEvasionPercent += sumStat(parsed, "increased_evasion_percent");
+    if (displayedEnergyShield === null) {
+      baseEnergyShield += sumStat(parsed, "maximum_energy_shield");
+      globalIncreasedEnergyShieldPercent += sumStat(parsed, "increased_energy_shield_percent");
+    }
     blockChancePercent += sumStat(parsed, "block_chance_percent");
     fire += sumStat(parsed, "fire_resistance_percent");
     cold += sumStat(parsed, "cold_resistance_percent");
@@ -66,9 +78,9 @@ export function computeDefenses(inventory: InventorySnapshot): DefenseStats {
     characterName: inventory.characterName,
     life: flatLife,
     mana: flatMana,
-    energyShield: Math.round(baseEnergyShield),
-    armour: Math.round(baseArmour),
-    evasion: Math.round(baseEvasion),
+    energyShield: Math.round(baseEnergyShield * (1 + globalIncreasedEnergyShieldPercent / 100)),
+    armour: Math.round(baseArmour * (1 + globalIncreasedArmourPercent / 100)),
+    evasion: Math.round(baseEvasion * (1 + globalIncreasedEvasionPercent / 100)),
     blockChancePercent: blockChancePercent > 0 ? blockChancePercent : null,
     resistances: {
       fire: { raw: fire, capped: cap(fire) },
@@ -82,6 +94,7 @@ export function computeDefenses(inventory: InventorySnapshot): DefenseStats {
       "granted life/ES/resistance/attribute nodes, are NOT included -- GGG's API exposes only allocated " +
       "passive node hashes, not their effects (see get_passive_tree). Resistances are capped at the standard " +
       "75% display cap; `raw` shows the uncapped gear-only sum. Displayed Armour/Evasion/ES item properties " +
-      "are already locally modified and are not multiplied by their affix text again.",
+      "are already locally modified and are not multiplied by their affix text again; %-increased defense " +
+      "affixes only apply as a global bonus when found on an item with no matching displayed property.",
   };
 }

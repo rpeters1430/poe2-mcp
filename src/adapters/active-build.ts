@@ -102,12 +102,18 @@ export function loadActiveBuild(): PobBuildSnapshot | null {
   return loadActiveBuildRecord()?.build ?? null;
 }
 
-function replaceRefreshed(record: ActiveBuildRecord, build: PobBuildSnapshot, sourceModifiedAt?: string): ActiveBuildRecord {
+function replaceRefreshed(
+  record: ActiveBuildRecord,
+  build: PobBuildSnapshot,
+  sourceModifiedAt?: string,
+  sourceUpdatedAt?: string
+): ActiveBuildRecord {
   const updated: ActiveBuildRecord = {
     ...record,
     build,
     refreshedAt: new Date().toISOString(),
     sourceModifiedAt: sourceModifiedAt ?? record.sourceModifiedAt,
+    sourceUpdatedAt: sourceUpdatedAt ?? record.sourceUpdatedAt,
   };
   writeRecord(updated);
   return updated;
@@ -132,7 +138,15 @@ async function refreshRecord(record: ActiveBuildRecord, force: boolean): Promise
     }
     const age = Date.now() - Date.parse(record.refreshedAt);
     if (force || age >= ACTIVE_BUILD_REFRESH_MS) {
-      return replaceRefreshed(record, await fetchNinjaAsPobBuild(accountName, league, characterName));
+      const build = await fetchNinjaAsPobBuild(accountName, league, characterName);
+      let sourceUpdatedAt: string | undefined;
+      try {
+        const match = (await fetchNinjaCharacters(accountName)).find(
+          (candidate) => candidate.name.toLowerCase() === characterName.toLowerCase()
+        );
+        sourceUpdatedAt = match?.updated;
+      } catch {}
+      return replaceRefreshed(record, build, undefined, sourceUpdatedAt);
     }
   }
   return record;
@@ -214,6 +228,12 @@ export async function getActiveBuildStatus(): Promise<ActiveBuildStatus> {
     };
   }
   const ageMs = Math.max(0, Date.now() - Date.parse(record.refreshedAt));
+  // Only poe.ninja-backed records use a time-based refresh policy: file-backed
+  // records are already re-synced against the source file's mtime by
+  // resolveActiveBuildRecord() above, and a build with neither a source file
+  // nor a remote identity (pasted XML/share code, or legacy state) has no
+  // refresh mechanism at all, so age alone does not mean stale for either.
+  const isRemote = record.origin === "poe_ninja" || record.origin === "auto_poe_ninja";
   return {
     available: true,
     origin: record.origin,
@@ -221,8 +241,8 @@ export async function getActiveBuildStatus(): Promise<ActiveBuildStatus> {
     savedAt: record.savedAt,
     refreshedAt: record.refreshedAt,
     ageMs,
-    stale: ageMs >= ACTIVE_BUILD_REFRESH_MS,
-    refreshable: Boolean(record.sourcePath) || record.origin === "poe_ninja" || record.origin === "auto_poe_ninja",
+    stale: isRemote ? ageMs >= ACTIVE_BUILD_REFRESH_MS : false,
+    refreshable: Boolean(record.sourcePath) || isRemote,
     sourceFile: record.sourcePath ? path.basename(record.sourcePath) : null,
     sourceModifiedAt: record.sourceModifiedAt,
     sourceUpdatedAt: record.sourceUpdatedAt,

@@ -1,5 +1,4 @@
 import { userAgent } from "../config.js";
-import { compareItem } from "../build/compare.js";
 import { parseMods, sumStat } from "../build/mod-parser.js";
 import { normalizeEquipmentSlot } from "../build/slots.js";
 import type { InventoryItem, InventorySnapshot, ItemProperty, ParsedItemText } from "../types.js";
@@ -241,10 +240,10 @@ export async function findTradeUpgrades(options: FindTradeUpgradesOptions): Prom
   const candidates = fetched.flatMap((entry) => {
     if (!entry.item) return [];
     const parsed = toParsedItem(entry.item);
-    const comparison = compareItem(options.inventory, parsed, options.slot);
+    const candidateParsed = parseMods(parsed.mods);
     const deltas = Object.fromEntries(priorities.map((priority) => {
-      const delta = comparison.statDeltas.find((value) => value.stat === PRIORITIES[priority].stat)?.delta ?? 0;
-      return [priority, delta];
+      const after = sumStat(candidateParsed, PRIORITIES[priority].stat);
+      return [priority, after - before[priority]];
     })) as Record<TradePriority, number>;
     return [{
       id: entry.id ?? null,

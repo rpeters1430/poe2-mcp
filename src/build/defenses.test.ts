@@ -29,12 +29,16 @@ test("aggregates flat life without reapplying local increased armour", () => {
       properties: [{ name: "Armour", values: [["400", 0]] }],
       mods: ["+60 to maximum Life"],
     }),
-    item({ slot: "Helm", mods: ["+40 to maximum Life", "20% increased Armour"] }),
+    item({
+      slot: "Helm",
+      properties: [{ name: "Armour", values: [["50", 0]] }],
+      mods: ["+40 to maximum Life", "20% increased Armour"],
+    }),
   ]);
 
   const defenses = computeDefenses(inv);
   assert.equal(defenses.life, 100);
-  assert.equal(defenses.armour, 400);
+  assert.equal(defenses.armour, 450);
   assert.equal(defenses.source, "gear_only");
 });
 
@@ -58,6 +62,25 @@ test("caps resistances at 75% but keeps the raw uncapped sum", () => {
   const defenses = computeDefenses(inv);
   assert.equal(defenses.resistances.fire.raw, 90);
   assert.equal(defenses.resistances.fire.capped, 75);
+});
+
+test("applies increased Armour/Evasion/ES from gear with no local base as a global bonus", () => {
+  const defenses = computeDefenses(snapshot([
+    item({
+      slot: "BodyArmour",
+      properties: [{ name: "Armour", values: [["400", 0]] }],
+    }),
+    item({
+      slot: "Boots",
+      properties: [{ name: "Evasion Rating", values: [["200", 0]] }],
+    }),
+    // A ring has no local Armour/Evasion/ES property, so any %-increased
+    // defense affix on it is a global bonus, not a local one already baked
+    // into a displayed property.
+    item({ slot: "Ring", mods: ["20% increased Armour", "10% increased Evasion Rating"] }),
+  ]));
+  assert.equal(defenses.armour, 480);
+  assert.equal(defenses.evasion, 220);
 });
 
 test("blockChancePercent is null rather than 0 when no gear grants block", () => {

@@ -16,7 +16,7 @@
     "test": "node --import tsx --test src/adapters/*.test.ts src/build/*.test.ts"
   },
   "engines": {
-    "node": ">=18.17"
+    "node": ">=20"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
