@@ -21,10 +21,18 @@ npm run build   # tsc -p tsconfig.json -> dist/
 npm run dev     # tsx src/index.ts (run the server directly from TS, no build step)
 npm run auth    # tsx src/auth.ts  (one-time interactive GGG OAuth/PKCE flow)
 npm start       # node dist/index.js (run the built server)
+npm test        # tsx --test src/**/*.test.ts (node:test, no build step)
 ```
 
-There is no test suite, lint config, or CI in this repo currently. There's also
-no `--watch` script; use `npm run dev` for iteration.
+Tests are colocated as `src/**/*.test.ts` next to the module they cover (e.g.
+`src/build/mod-parser.test.ts`), using node's built-in `node:test`/`node:assert`
+rather than a new dependency, and are excluded from `tsc`'s `include` so they
+never land in `dist/`. Coverage is currently limited to the pure functions
+under `src/build/` (mod/property/item-text parsing, defenses/offense
+aggregation, comparison, PoB decode/parse) — nothing that touches the network,
+the filesystem config paths, or the log tailer has tests yet. There is no lint
+config or CI in this repo currently. There's also no `--watch` script; use
+`npm run dev` for iteration.
 
 To sanity-check the server standalone against stdio (it just waits for an MCP
 client to connect and prints the resolved `Client.txt` path to stderr):
@@ -174,6 +182,28 @@ independent third-party parser; if `is_pob_running`/`list_recent_pob_builds`
 don't find a real install, the candidate process-name list (`pob.ts`) or
 builds-path list (`config.ts`'s `candidatePobBuildsPaths`) need adjusting,
 same "verify against reality" pattern as everywhere else in this project.
+
+**poe.ninja fallback** (`src/adapters/poe-ninja.ts`, `src/adapters/active-build.ts`)
+is a third build-data source, alongside the GGG API and PoB2 import above,
+for the common case of neither being available (no GGG OAuth client ID, no
+PoB2 export handy): `set_account_name` + `import_poe_ninja_character` (or a
+pasted `poe.ninja/poe2/profile/.../character/...` URL) fetch a character's
+public poe.ninja profile, which — when it has a `pathOfBuildingExport` field
+— gets decoded through the *same* `resolvePobXml`/`parsePobXml` pipeline as
+`import_pob_build`, so a poe.ninja import produces an identical
+`PobBuildSnapshot`. `active-build.ts` centralizes the "what build backs the
+gear/defense tools right now" question with a three-step cascade
+(`resolveActiveBuild`): an explicitly saved/imported build
+(`configDir()/active-build.json`) first, then the most-recently-modified
+local PoB2 `.xml`, then a poe.ninja lookup if `POE2_ACCOUNT_NAME` is set —
+same override-then-autodetect shape as `active-character.ts` and
+`config.ts`'s log-path resolution. `src/tools/register.ts`'s GGG-API-backed
+tools (`list_characters`, `get_character_state`, `get_inventory`,
+`get_passive_tree`, `get_defenses`, `get_offense_stats`, `compare_item`) each
+catch a GGG API failure and fall back through poe.ninja then the active
+build via `pobBuildToInventorySnapshot`/`pobBuildToPassiveTree`/
+`pobBuildToCharacterState`, so all three data sources answer the same tool
+surface rather than needing separate tools per source.
 
 ## Adding a new tool
 
