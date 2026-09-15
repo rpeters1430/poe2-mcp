@@ -43,10 +43,14 @@ reliably supports today.
 | `get_inventory` | GGG official API | On request (network call) |
 | `get_current_character` | Local state file, or `Client.txt` inference | On request |
 | `set_active_character` | Local state file | Write-through |
+| `get_active_build_status` | Active-build provenance envelope | On request; file/ninja source may refresh |
+| `refresh_active_build` | Selected PoB file or poe.ninja identity | Explicit refresh |
+| `clear_active_build` | Local active-build state | Write-through |
 | `get_passive_tree` | GGG official API | On request (network call) |
 | `get_defenses` | GGG official API (gear-only, computed) | On request (network call) |
 | `get_offense_stats` | GGG official API (gear-only, computed) | On request (network call) |
 | `compare_item` | Pasted item text + GGG official API | On request (network call) |
+| `find_trade_upgrades` | Equipped gear + GGG trade site | Live search; up to 10 listing details |
 | `get_recent_events` | Local `Client.txt` tail | ~1s poll interval |
 | `get_current_area` | Local `Client.txt` tail | ~1s poll interval |
 | `get_session_summary` | Local `Client.txt` tail | ~1s poll interval |
@@ -71,6 +75,19 @@ Every response includes a `source` field and a freshness marker
 tell "this is what the character sheet said 40 seconds ago" from "this
 event happened 2 seconds ago" — that distinction matters for how much to
 trust a recommendation built on it.
+
+Active-build-derived responses additionally include an `activeBuild` envelope
+with `origin`, `pinned`, `refreshedAt`, `ageMs`, and known account/character/
+league identity. File sources are checked by mtime on use; poe.ninja sources
+have a five-minute TTL. `get_active_build_status` exposes only the source
+filename, not its absolute local path.
+
+`find_trade_upgrades` is advisory and read-only: it searches online listings
+and returns an official `pathofexile.com/trade2/...` URL but never whispers,
+reserves, buys, or otherwise performs a trade. Its GGG-hosted endpoint is not
+part of the published developer API, so responses explicitly carry
+`apiStatus: "undocumented_official_site_endpoint"` and may report an access
+warning or require a locally configured session cookie.
 
 A third category, gear-derived build data (`get_passive_tree`,
 `get_defenses`, `get_offense_stats`, `compare_item`), is computed from the

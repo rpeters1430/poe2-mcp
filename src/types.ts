@@ -249,7 +249,7 @@ export interface PobPassiveSpec {
 }
 
 export interface PobBuildSnapshot {
-  source: "pob_import";
+  source: "pob_import" | "poe_ninja";
   importedAt: string;
   className: string | null;
   ascendClassName: string | null;
@@ -261,6 +261,54 @@ export interface PobBuildSnapshot {
   /** PoB's own computed stats as of whenever the build was last calculated -- see the type doc above. */
   playerStats: PobPlayerStat[];
   note: string;
+}
+
+export type ActiveBuildOrigin =
+  | "explicit_code"
+  | "explicit_file"
+  | "poe_ninja"
+  | "auto_pob_file"
+  | "auto_poe_ninja"
+  | "legacy";
+
+export interface ActiveBuildIdentity {
+  accountName: string | null;
+  characterName: string | null;
+  league: string | null;
+}
+
+export interface ActiveBuildRecord {
+  version: 1;
+  build: PobBuildSnapshot;
+  origin: ActiveBuildOrigin;
+  pinned: boolean;
+  savedAt: string;
+  refreshedAt: string;
+  sourcePath: string | null;
+  sourceModifiedAt: string | null;
+  sourceUpdatedAt: string | null;
+  identity: ActiveBuildIdentity;
+}
+
+export interface ActiveBuildStatus {
+  available: boolean;
+  origin: ActiveBuildOrigin | null;
+  pinned: boolean | null;
+  savedAt: string | null;
+  refreshedAt: string | null;
+  ageMs: number | null;
+  stale: boolean | null;
+  refreshable: boolean;
+  sourceFile: string | null;
+  sourceModifiedAt: string | null;
+  sourceUpdatedAt: string | null;
+  identity: ActiveBuildIdentity | null;
+  buildSummary: {
+    className: string | null;
+    ascendClassName: string | null;
+    level: number | null;
+    equipmentCount: number;
+  } | null;
 }
 
 export type GameEventType =

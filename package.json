@@ -13,7 +13,7 @@
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
     "auth": "tsx src/auth.ts",
-    "test": "tsx --test src/**/*.test.ts"
+    "test": "node --import tsx --test src/adapters/*.test.ts src/build/*.test.ts"
   },
   "engines": {
     "node": ">=18.17"

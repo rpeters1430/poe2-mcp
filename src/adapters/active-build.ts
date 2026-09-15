@@ -2,6 +2,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { configDir, resolveAccountName, resolvePobBuildsDir } from "../config.js";
 import type {
+  ActiveBuildIdentity,
+  ActiveBuildOrigin,
+  ActiveBuildRecord,
+  ActiveBuildStatus,
   CharacterState,
   InventorySnapshot,
   PassiveTreeSnapshot,
@@ -13,59 +17,149 @@ import { resolvePobXml } from "../build/pob-decode.js";
 import { fetchNinjaAsPobBuild, fetchNinjaCharacters } from "./poe-ninja.js";
 import { resolveNodeNames } from "./tree-data.js";
 
+export const ACTIVE_BUILD_REFRESH_MS = 5 * 60 * 1000;
+
 function activeBuildPath(): string {
   return path.join(configDir(), "active-build.json");
 }
 
-export function saveActiveBuild(build: PobBuildSnapshot): void {
+function emptyIdentity(): ActiveBuildIdentity {
+  return { accountName: null, characterName: null, league: null };
+}
+
+function isRecord(value: unknown): value is ActiveBuildRecord {
+  return Boolean(
+    value && typeof value === "object" &&
+      (value as ActiveBuildRecord).version === 1 &&
+      (value as ActiveBuildRecord).build
+  );
+}
+
+function writeRecord(record: ActiveBuildRecord): void {
+  const target = activeBuildPath();
+  const temp = `${target}.tmp-${process.pid}-${Date.now()}`;
   try {
-    fs.writeFileSync(activeBuildPath(), JSON.stringify(build, null, 2), "utf8");
+    fs.writeFileSync(temp, JSON.stringify(record, null, 2), { encoding: "utf8", mode: 0o600 });
+    fs.renameSync(temp, target);
   } catch (err) {
-    console.error("[poe2-mcp-server] Failed to save active build:", err);
+    try { fs.unlinkSync(temp); } catch {}
+    throw err;
   }
 }
 
-export function loadActiveBuild(): PobBuildSnapshot | null {
+export interface SaveActiveBuildOptions {
+  origin: ActiveBuildOrigin;
+  pinned: boolean;
+  sourcePath?: string | null;
+  sourceModifiedAt?: string | null;
+  sourceUpdatedAt?: string | null;
+  identity?: Partial<ActiveBuildIdentity>;
+}
+
+export function saveActiveBuild(build: PobBuildSnapshot, options: SaveActiveBuildOptions): ActiveBuildRecord {
+  const now = new Date().toISOString();
+  const record: ActiveBuildRecord = {
+    version: 1,
+    build,
+    origin: options.origin,
+    pinned: options.pinned,
+    savedAt: now,
+    refreshedAt: now,
+    sourcePath: options.sourcePath ?? null,
+    sourceModifiedAt: options.sourceModifiedAt ?? null,
+    sourceUpdatedAt: options.sourceUpdatedAt ?? null,
+    identity: { ...emptyIdentity(), ...options.identity },
+  };
+  writeRecord(record);
+  return record;
+}
+
+export function loadActiveBuildRecord(): ActiveBuildRecord | null {
   try {
-    const raw = fs.readFileSync(activeBuildPath(), "utf8");
-    return JSON.parse(raw) as PobBuildSnapshot;
+    const parsed = JSON.parse(fs.readFileSync(activeBuildPath(), "utf8")) as unknown;
+    if (isRecord(parsed)) return parsed;
+    const build = parsed as PobBuildSnapshot;
+    if (!build?.equipment || !build?.passiveTree) return null;
+    const importedAt = build.importedAt ?? new Date().toISOString();
+    return {
+      version: 1,
+      build,
+      origin: "legacy",
+      pinned: true,
+      savedAt: importedAt,
+      refreshedAt: importedAt,
+      sourcePath: null,
+      sourceModifiedAt: null,
+      sourceUpdatedAt: null,
+      identity: emptyIdentity(),
+    };
   } catch {
     return null;
   }
 }
 
-/**
- * Resolves the active build using a graceful priority cascade:
- * 1. An explicitly saved/imported active build (from import_pob_build or poe.ninja)
- * 2. Most recently modified .xml build file in the user's local PoB2 directory
- * 3. Latest character from poe.ninja if POE2_ACCOUNT_NAME is configured
- */
-export async function resolveActiveBuild(): Promise<PobBuildSnapshot | null> {
-  // 1. Stored active build
-  const stored = loadActiveBuild();
-  if (stored) return stored;
+export function loadActiveBuild(): PobBuildSnapshot | null {
+  return loadActiveBuildRecord()?.build ?? null;
+}
 
-  // 2. Local PoB directory
+function replaceRefreshed(record: ActiveBuildRecord, build: PobBuildSnapshot, sourceModifiedAt?: string): ActiveBuildRecord {
+  const updated: ActiveBuildRecord = {
+    ...record,
+    build,
+    refreshedAt: new Date().toISOString(),
+    sourceModifiedAt: sourceModifiedAt ?? record.sourceModifiedAt,
+  };
+  writeRecord(updated);
+  return updated;
+}
+
+async function refreshRecord(record: ActiveBuildRecord, force: boolean): Promise<ActiveBuildRecord> {
+  if (record.sourcePath) {
+    const buildsDir = resolvePobBuildsDir();
+    if (!buildsDir) throw new Error("The configured PoB Builds directory is unavailable.");
+    const modifiedAt = fs.statSync(record.sourcePath).mtime.toISOString();
+    if (force || modifiedAt !== record.sourceModifiedAt) {
+      const raw = readPobBuildFile(record.sourcePath, buildsDir);
+      return replaceRefreshed(record, parsePobXml(await resolvePobXml(raw)), modifiedAt);
+    }
+    return record;
+  }
+
+  if (record.origin === "poe_ninja" || record.origin === "auto_poe_ninja") {
+    const { accountName, characterName, league } = record.identity;
+    if (!accountName || !characterName || !league) {
+      throw new Error("This poe.ninja build has incomplete identity metadata; import it again.");
+    }
+    const age = Date.now() - Date.parse(record.refreshedAt);
+    if (force || age >= ACTIVE_BUILD_REFRESH_MS) {
+      return replaceRefreshed(record, await fetchNinjaAsPobBuild(accountName, league, characterName));
+    }
+  }
+  return record;
+}
+
+export async function resolveActiveBuildRecord(force = false): Promise<ActiveBuildRecord | null> {
+  const stored = loadActiveBuildRecord();
+  if (stored) return refreshRecord(stored, force);
+
   const pobDir = resolvePobBuildsDir();
   if (pobDir) {
     const recent = listRecentPobBuilds(pobDir);
     if (recent.length > 0) {
       try {
-        const raw = readPobBuildFile(recent[0].path, pobDir);
-        const xml = await resolvePobXml(raw);
-        const build = parsePobXml(xml);
-        saveActiveBuild(build);
-        return build;
+        const build = parsePobXml(await resolvePobXml(readPobBuildFile(recent[0].path, pobDir)));
+        return saveActiveBuild(build, {
+          origin: "auto_pob_file",
+          pinned: false,
+          sourcePath: recent[0].path,
+          sourceModifiedAt: recent[0].modifiedAt,
+        });
       } catch (err) {
-        console.error(
-          `[poe2-mcp-server] Failed to auto-load local PoB build from ${recent[0].path}:`,
-          err
-        );
+        console.error(`[poe2-mcp-server] Failed to auto-load local PoB build from ${recent[0].path}:`, err);
       }
     }
   }
 
-  // 3. poe.ninja account fallback
   const account = resolveAccountName();
   if (account) {
     try {
@@ -73,23 +167,78 @@ export async function resolveActiveBuild(): Promise<PobBuildSnapshot | null> {
       const current = chars.find((c) => c.isCurrent) ?? chars[0];
       if (current) {
         const build = await fetchNinjaAsPobBuild(account, current.leagueUrl, current.name);
-        saveActiveBuild(build);
-        return build;
+        return saveActiveBuild(build, {
+          origin: "auto_poe_ninja",
+          pinned: false,
+          sourceUpdatedAt: current.updated,
+          identity: { accountName: account, characterName: current.name, league: current.league },
+        });
       }
     } catch (err) {
       console.error(`[poe2-mcp-server] Failed to auto-load character from poe.ninja for ${account}:`, err);
     }
   }
-
   return null;
 }
 
-export function pobBuildToInventorySnapshot(
-  build: PobBuildSnapshot,
-  overrideName?: string
-): InventorySnapshot {
+export async function resolveActiveBuild(): Promise<PobBuildSnapshot | null> {
+  return (await resolveActiveBuildRecord())?.build ?? null;
+}
+
+export async function refreshActiveBuild(): Promise<ActiveBuildRecord> {
+  const record = loadActiveBuildRecord();
+  if (!record) throw new Error("No active build is available to refresh.");
+  if (!record.sourcePath && record.origin !== "poe_ninja" && record.origin !== "auto_poe_ninja") {
+    throw new Error("This build came from pasted XML/share code and cannot be refreshed; import it again.");
+  }
+  return refreshRecord(record, true);
+}
+
+export function clearActiveBuild(): boolean {
+  try {
+    fs.unlinkSync(activeBuildPath());
+    return true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw err;
+  }
+}
+
+export async function getActiveBuildStatus(): Promise<ActiveBuildStatus> {
+  const record = await resolveActiveBuildRecord();
+  if (!record) {
+    return {
+      available: false, origin: null, pinned: null, savedAt: null, refreshedAt: null,
+      ageMs: null, stale: null, refreshable: false, sourceFile: null,
+      sourceModifiedAt: null, sourceUpdatedAt: null, identity: null, buildSummary: null,
+    };
+  }
+  const ageMs = Math.max(0, Date.now() - Date.parse(record.refreshedAt));
   return {
-    source: (build.source as any) ?? "pob_import",
+    available: true,
+    origin: record.origin,
+    pinned: record.pinned,
+    savedAt: record.savedAt,
+    refreshedAt: record.refreshedAt,
+    ageMs,
+    stale: ageMs >= ACTIVE_BUILD_REFRESH_MS,
+    refreshable: Boolean(record.sourcePath) || record.origin === "poe_ninja" || record.origin === "auto_poe_ninja",
+    sourceFile: record.sourcePath ? path.basename(record.sourcePath) : null,
+    sourceModifiedAt: record.sourceModifiedAt,
+    sourceUpdatedAt: record.sourceUpdatedAt,
+    identity: record.identity,
+    buildSummary: {
+      className: record.build.className,
+      ascendClassName: record.build.ascendClassName,
+      level: record.build.level,
+      equipmentCount: record.build.equipment.length,
+    },
+  };
+}
+
+export function pobBuildToInventorySnapshot(build: PobBuildSnapshot, overrideName?: string): InventorySnapshot {
+  return {
+    source: build.source,
     fetchedAt: build.importedAt,
     characterName: overrideName ?? build.className ?? "Current Character",
     equipment: build.equipment,
@@ -97,14 +246,11 @@ export function pobBuildToInventorySnapshot(
   };
 }
 
-export async function pobBuildToPassiveTree(
-  build: PobBuildSnapshot,
-  overrideName?: string
-): Promise<PassiveTreeSnapshot> {
+export async function pobBuildToPassiveTree(build: PobBuildSnapshot, overrideName?: string): Promise<PassiveTreeSnapshot> {
   const allocatedHashes = build.passiveTree.allocatedNodeIds;
   const { resolvedNodes, note } = await resolveNodeNames(allocatedHashes);
   return {
-    source: (build.source as any) ?? "pob_import",
+    source: build.source,
     fetchedAt: build.importedAt,
     characterName: overrideName ?? build.className ?? "Current Character",
     ascendancyClass: build.ascendClassName,
@@ -115,12 +261,9 @@ export async function pobBuildToPassiveTree(
   };
 }
 
-export function pobBuildToCharacterState(
-  build: PobBuildSnapshot,
-  overrideName?: string
-): CharacterState {
+export function pobBuildToCharacterState(build: PobBuildSnapshot, overrideName?: string): CharacterState {
   return {
-    source: (build.source as any) ?? "pob_import",
+    source: build.source,
     fetchedAt: build.importedAt,
     name: overrideName ?? build.className ?? "Active Build",
     characterClass: build.className ?? "Unknown",

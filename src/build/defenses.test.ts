@@ -22,7 +22,7 @@ function snapshot(equipment: InventoryItem[]): InventorySnapshot {
   return { source: "pob_import", fetchedAt: new Date().toISOString(), characterName: "Test", equipment, skills: [] };
 }
 
-test("aggregates flat life across items and rounds ES/armour with increased%", () => {
+test("aggregates flat life without reapplying local increased armour", () => {
   const inv = snapshot([
     item({
       slot: "BodyArmour",
@@ -34,8 +34,20 @@ test("aggregates flat life across items and rounds ES/armour with increased%", (
 
   const defenses = computeDefenses(inv);
   assert.equal(defenses.life, 100);
-  assert.equal(defenses.armour, 480); // 400 * 1.2
+  assert.equal(defenses.armour, 400);
   assert.equal(defenses.source, "gear_only");
+});
+
+test("does not double count local ES but includes flat ES on non-ES gear", () => {
+  const defenses = computeDefenses(snapshot([
+    item({
+      slot: "BodyArmour",
+      properties: [{ name: "Energy Shield", values: [["245", 0]] }],
+      mods: ["+100 to maximum Energy Shield", "30% increased Energy Shield"],
+    }),
+    item({ slot: "Ring", mods: ["+20 to maximum Energy Shield"] }),
+  ]));
+  assert.equal(defenses.energyShield, 265);
 });
 
 test("caps resistances at 75% but keeps the raw uncapped sum", () => {

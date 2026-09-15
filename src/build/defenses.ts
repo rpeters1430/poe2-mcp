@@ -21,13 +21,9 @@ const RESISTANCE_CAP = 75;
 export function computeDefenses(inventory: InventorySnapshot): DefenseStats {
   let flatLife = 0;
   let flatMana = 0;
-  let flatEnergyShield = 0;
   let baseArmour = 0;
   let baseEvasion = 0;
   let baseEnergyShield = 0;
-  let increasedArmourPercent = 0;
-  let increasedEvasionPercent = 0;
-  let increasedEnergyShieldPercent = 0;
   let blockChancePercent = 0;
   let fire = 0;
   let cold = 0;
@@ -41,16 +37,17 @@ export function computeDefenses(inventory: InventorySnapshot): DefenseStats {
     if (!contributesToActiveCharacter(item.slot)) continue;
     baseArmour += propertyNumber(item.properties, "Armour") ?? 0;
     baseEvasion += propertyNumber(item.properties, "Evasion Rating") ?? 0;
-    baseEnergyShield += propertyNumber(item.properties, "Energy Shield") ?? 0;
+    const displayedEnergyShield = propertyNumber(item.properties, "Energy Shield");
+    baseEnergyShield += displayedEnergyShield ?? 0;
     blockChancePercent += propertyNumber(item.properties, "Chance to Block") ?? 0;
 
     const parsed = parseMods(item.mods);
     flatLife += sumStat(parsed, "maximum_life");
     flatMana += sumStat(parsed, "maximum_mana");
-    flatEnergyShield += sumStat(parsed, "maximum_energy_shield");
-    increasedArmourPercent += sumStat(parsed, "increased_armour_percent");
-    increasedEvasionPercent += sumStat(parsed, "increased_evasion_percent");
-    increasedEnergyShieldPercent += sumStat(parsed, "increased_energy_shield_percent");
+    // Armour pieces report their final local defensive value in properties;
+    // reapplying their flat/% affixes would double count. Flat ES on an item
+    // with no displayed ES property (for example, jewellery) is character-wide.
+    if (displayedEnergyShield === null) baseEnergyShield += sumStat(parsed, "maximum_energy_shield");
     blockChancePercent += sumStat(parsed, "block_chance_percent");
     fire += sumStat(parsed, "fire_resistance_percent");
     cold += sumStat(parsed, "cold_resistance_percent");
@@ -69,9 +66,9 @@ export function computeDefenses(inventory: InventorySnapshot): DefenseStats {
     characterName: inventory.characterName,
     life: flatLife,
     mana: flatMana,
-    energyShield: Math.round((baseEnergyShield + flatEnergyShield) * (1 + increasedEnergyShieldPercent / 100)),
-    armour: Math.round(baseArmour * (1 + increasedArmourPercent / 100)),
-    evasion: Math.round(baseEvasion * (1 + increasedEvasionPercent / 100)),
+    energyShield: Math.round(baseEnergyShield),
+    armour: Math.round(baseArmour),
+    evasion: Math.round(baseEvasion),
     blockChancePercent: blockChancePercent > 0 ? blockChancePercent : null,
     resistances: {
       fire: { raw: fire, capped: cap(fire) },
@@ -84,6 +81,7 @@ export function computeDefenses(inventory: InventorySnapshot): DefenseStats {
       "Gear-only aggregate: base life/mana/attributes from character level and class, and any passive-tree-" +
       "granted life/ES/resistance/attribute nodes, are NOT included -- GGG's API exposes only allocated " +
       "passive node hashes, not their effects (see get_passive_tree). Resistances are capped at the standard " +
-      "75% display cap; `raw` shows the uncapped gear-only sum.",
+      "75% display cap; `raw` shows the uncapped gear-only sum. Displayed Armour/Evasion/ES item properties " +
+      "are already locally modified and are not multiplied by their affix text again.",
   };
 }

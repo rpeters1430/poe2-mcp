@@ -116,5 +116,5 @@ export async function fetchNinjaAsPobBuild(
   }
 
   const xml = await resolvePobXml(res.charModel.pathOfBuildingExport);
-  return parsePobXml(xml);
+  return { ...parsePobXml(xml), source: "poe_ninja" };
 }
