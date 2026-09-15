@@ -48,6 +48,16 @@ export interface InventoryItem {
   identified: boolean | null;
   /** Raw explicit/implicit mod strings, unparsed. */
   mods: string[];
+  /**
+   * Raw mod strings granted by socketed Runes/Soul Cores/Talismans (PoE2's
+   * only socket type), kept separate from `mods` because -- unlike the
+   * item's own affixes -- these are never already reflected in a displayed
+   * Armour/Evasion/Energy Shield property, so defense aggregation must
+   * always treat them as a global bonus rather than risk double-counting
+   * them as local. Omitted (not empty array) when the source has no
+   * socket data to offer.
+   */
+  socketedMods?: string[];
   /** Base numeric properties (Armour, damage ranges, crit, APS, ...), unparsed beyond GGG's own shape. */
   properties: ItemProperty[];
   corrupted: boolean | null;
@@ -327,7 +337,8 @@ export interface TradeCandidate {
   baseType: string;
   itemLevel: number | null;
   price: { amount: number | null; currency: string | null } | null;
-  priorityDeltas: Record<TradePriority, number>;
+  /** Only the requested priorities are present -- not every TradePriority key. */
+  priorityDeltas: Partial<Record<TradePriority, number>>;
   improvesAllPriorities: boolean;
   mods: string[];
   score: number;
@@ -340,12 +351,12 @@ export interface TradeUpgradeResult {
   league: string;
   searchUrl: string;
   totalMatches: number;
-  currentItem: { name: string; slot: string | null; priorityValues: Record<TradePriority, number> } | null;
+  currentItem: { name: string; slot: string | null; priorityValues: Partial<Record<TradePriority, number>> } | null;
   appliedFilters: {
     slot: string;
     category: string;
     priorities: TradePriority[];
-    minimumCandidateValues: Record<TradePriority, number>;
+    minimumCandidateValues: Partial<Record<TradePriority, number>>;
     maxPrice: { amount: number; currency: string };
     maxRequiredLevel: number | null;
     onlineOnly: boolean;

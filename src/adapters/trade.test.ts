@@ -283,3 +283,55 @@ test("warns instead of silently searching Shield when the offhand item type can'
     resetTradeMetadataCacheForTests();
   }
 });
+
+test("does not floor the search minimum to 1 for a stat with a negative baseline", async () => {
+  resetTradeMetadataCacheForTests();
+  const inventory: InventorySnapshot = {
+    source: "pob_import",
+    fetchedAt: new Date().toISOString(),
+    characterName: "Example",
+    skills: [],
+    equipment: [{
+      slot: "Ring", name: "Cursed Ring", baseType: "Iron Ring", rarity: "Rare", itemLevel: 20,
+      identified: true, corrupted: false, properties: [],
+      mods: ["-20% to Fire Resistance"],
+    }],
+  };
+
+  const originalFetch = globalThis.fetch;
+  let postedQuery: any;
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/api/trade2/data/stats")) {
+      return new Response(JSON.stringify({ result: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (url.includes("/api/trade2/search/poe2/Standard")) {
+      postedQuery = JSON.parse(String(init?.body));
+      return new Response(JSON.stringify({ id: "search-id", result: [], total: 0 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+
+  try {
+    const result = await findTradeUpgrades({
+      inventory,
+      league: "Standard",
+      slot: "Ring",
+      priorities: ["fire_resistance"],
+      maxPrice: 1,
+      currency: "exalted",
+    }) as any;
+
+    // -20% baseline + minimumGain 1 => -19, not clamped up to 1: a -10%
+    // candidate is still a real (if modest) improvement that must not be
+    // excluded from the search.
+    assert.equal(postedQuery.query.stats[0].filters[0].value.min, -19);
+    assert.equal(result.appliedFilters.minimumCandidateValues.fire_resistance, -19);
+  } finally {
+    globalThis.fetch = originalFetch;
+    resetTradeMetadataCacheForTests();
+  }
+});

@@ -184,9 +184,9 @@ function currentItem(inventory: InventorySnapshot, slot: string): InventoryItem 
   return inventory.equipment.find((item) => normalizeEquipmentSlot(item.slot) === normalized) ?? null;
 }
 
-function priorityValues(item: InventoryItem | null, priorities: TradePriority[]): Record<TradePriority, number> {
+function priorityValues(item: InventoryItem | null, priorities: TradePriority[]): Partial<Record<TradePriority, number>> {
   const parsed = parseMods(item?.mods ?? []);
-  return Object.fromEntries(priorities.map((priority) => [priority, sumStat(parsed, PRIORITIES[priority].stat)])) as Record<TradePriority, number>;
+  return Object.fromEntries(priorities.map((priority) => [priority, sumStat(parsed, PRIORITIES[priority].stat)]));
 }
 
 function toParsedItem(item: TradeApiItem): ParsedItemText {
@@ -217,9 +217,14 @@ export async function findTradeUpgrades(options: FindTradeUpgradesOptions): Prom
   const equipped = currentItem(options.inventory, options.slot);
   const before = priorityValues(equipped, priorities);
   const { ids: statIds, fromMetadata } = await resolveStatIds(priorities);
-  const appliedMinimums = Object.fromEntries(
-    priorities.map((priority) => [priority, Math.max(1, before[priority] + minimumGain)])
-  ) as Record<TradePriority, number>;
+  // "The equipped item's contribution plus at least minimumGain" -- no
+  // artificial floor of 1. A floor here would silently exclude a real
+  // upgrade for a stat with a negative baseline (e.g. a -20% resistance
+  // item improving to -10%, which parseMods can represent) by demanding
+  // the candidate reach a positive value instead of merely a better one.
+  const appliedMinimums: Partial<Record<TradePriority, number>> = Object.fromEntries(
+    priorities.map((priority) => [priority, (before[priority] ?? 0) + minimumGain])
+  );
 
   const inferredOffhandCategory = options.slot === "Offhand" ? resolveOffhandCategory(equipped) : null;
   const category = options.slot === "Offhand" ? inferredOffhandCategory ?? SLOT_CATEGORY.Offhand : SLOT_CATEGORY[options.slot];
@@ -230,7 +235,8 @@ export async function findTradeUpgrades(options: FindTradeUpgradesOptions): Prom
       status: { option: "online" },
       stats: [{
         type: "and",
-        filters: priorities.map((priority) => ({ id: statIds[priority], value: { min: appliedMinimums[priority] } })),
+        // Non-null: appliedMinimums was built from this same `priorities` array above.
+        filters: priorities.map((priority) => ({ id: statIds[priority], value: { min: appliedMinimums[priority]! } })),
       }],
       filters: {
         type_filters: { filters: { category: { option: category } } },
@@ -275,10 +281,10 @@ export async function findTradeUpgrades(options: FindTradeUpgradesOptions): Prom
     if (!entry.item) return [];
     const parsed = toParsedItem(entry.item);
     const candidateParsed = parseMods(parsed.mods);
-    const deltas = Object.fromEntries(priorities.map((priority) => {
+    const deltas: Partial<Record<TradePriority, number>> = Object.fromEntries(priorities.map((priority) => {
       const after = sumStat(candidateParsed, PRIORITIES[priority].stat);
-      return [priority, after - before[priority]];
-    })) as Record<TradePriority, number>;
+      return [priority, after - (before[priority] ?? 0)];
+    }));
     return [{
       id: entry.id ?? null,
       name: parsed.name,
@@ -288,9 +294,10 @@ export async function findTradeUpgrades(options: FindTradeUpgradesOptions): Prom
         ? { amount: entry.listing.price.amount ?? null, currency: entry.listing.price.currency ?? null }
         : null,
       priorityDeltas: deltas,
-      improvesAllPriorities: priorities.every((priority) => deltas[priority] >= minimumGain),
+      // Non-null: deltas was built from this same `priorities` array above.
+      improvesAllPriorities: priorities.every((priority) => deltas[priority]! >= minimumGain),
       mods: parsed.mods,
-      score: priorities.reduce((sum, priority) => sum + Math.max(0, deltas[priority]), 0),
+      score: priorities.reduce((sum, priority) => sum + Math.max(0, deltas[priority]!), 0),
     }];
   }).sort((a, b) => Number(b.improvesAllPriorities) - Number(a.improvesAllPriorities) || b.score - a.score);
 

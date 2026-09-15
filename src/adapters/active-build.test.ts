@@ -3,7 +3,10 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { clearActiveBuild, getActiveBuildStatus, loadActiveBuildRecord, resolveActiveBuildRecord, saveActiveBuild } from "./active-build.js";
+import {
+  clearActiveBuild, getActiveBuildStatus, loadActiveBuildRecord, resetRefreshBackoffForTests,
+  resolveActiveBuildRecord, saveActiveBuild,
+} from "./active-build.js";
 import { parsePobXml } from "../build/pob-parser.js";
 
 function xml(level: number): string {
@@ -196,6 +199,7 @@ test("refreshes a poe.ninja build using the saved leagueUrl slug, not the displa
 });
 
 test("keeps the last-known-good poe.ninja build when a passive TTL refresh fails, but a forced refresh throws", async () => {
+  resetRefreshBackoffForTests();
   const previousConfig = process.env.POE2_MCP_CONFIG_DIR;
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), "poe2-mcp-active-ninja-fail-test-"));
   const config = path.join(parent, "config");
@@ -267,5 +271,91 @@ test("automatic selection re-evaluates instead of sticking to a stale auto-picke
     else process.env.POE2_MCP_CONFIG_DIR = previousConfig;
     if (previousBuilds === undefined) delete process.env.POE2_POB_BUILDS_PATH;
     else process.env.POE2_POB_BUILDS_PATH = previousBuilds;
+  }
+});
+
+test("automatic poe.ninja selection switches when the character's league changes", async () => {
+  const previousConfig = process.env.POE2_MCP_CONFIG_DIR;
+  const previousAccount = process.env.POE2_ACCOUNT_NAME;
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), "poe2-mcp-active-league-switch-test-"));
+  const config = path.join(parent, "config");
+  fs.mkdirSync(config);
+  process.env.POE2_MCP_CONFIG_DIR = config;
+  process.env.POE2_ACCOUNT_NAME = "acc";
+
+  let currentLeagueUrl = "standard";
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: unknown) => {
+    const url = String(input);
+    if (url.includes("/model/0")) {
+      return new Response(JSON.stringify({
+        type: "found",
+        charModel: { account: "acc", name: "Char", league: currentLeagueUrl, level: 90, class: "Witch", pathOfBuildingExport: xml(90) },
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (url.match(/\/characters\/[^/]+\/0$/)) {
+      return new Response(JSON.stringify([
+        { name: "Char", level: 90, className: "Witch", league: currentLeagueUrl, leagueUrl: currentLeagueUrl, isCurrent: true, updated: "2026-09-15T00:00:00Z" },
+      ]), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    throw new Error(`Unexpected URL: ${url}`);
+  }) as typeof fetch;
+
+  try {
+    const first = await resolveActiveBuildRecord();
+    assert.equal(first?.identity.leagueUrl, "standard");
+
+    // The account's "current" character moved to a new league.
+    currentLeagueUrl = "roa";
+    const second = await resolveActiveBuildRecord();
+    assert.equal(second?.identity.leagueUrl, "roa");
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousAccount === undefined) delete process.env.POE2_ACCOUNT_NAME;
+    else process.env.POE2_ACCOUNT_NAME = previousAccount;
+    if (previousConfig === undefined) delete process.env.POE2_MCP_CONFIG_DIR;
+    else process.env.POE2_MCP_CONFIG_DIR = previousConfig;
+  }
+});
+
+test("backs off from retrying a failed poe.ninja refresh until the cooldown elapses", async () => {
+  resetRefreshBackoffForTests();
+  const previousConfig = process.env.POE2_MCP_CONFIG_DIR;
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), "poe2-mcp-active-backoff-test-"));
+  const config = path.join(parent, "config");
+  fs.mkdirSync(config);
+  process.env.POE2_MCP_CONFIG_DIR = config;
+
+  let fetchCalls = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => {
+    fetchCalls++;
+    throw new Error("network unreachable");
+  }) as typeof fetch;
+
+  try {
+    saveActiveBuild(parsePobXml(xml(90)), {
+      origin: "poe_ninja",
+      pinned: true,
+      identity: { accountName: "acc", characterName: "Char", league: "Standard", leagueUrl: "standard" },
+    });
+    const recordPath = path.join(config, "active-build.json");
+    const stored = JSON.parse(fs.readFileSync(recordPath, "utf8"));
+    stored.refreshedAt = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    fs.writeFileSync(recordPath, JSON.stringify(stored, null, 2));
+
+    const first = await resolveActiveBuildRecord();
+    assert.equal(first?.build.level, 90);
+    assert.equal(fetchCalls, 1);
+
+    // A second passive resolution immediately after must not retry the
+    // failed upstream call again during the cooldown window.
+    const second = await resolveActiveBuildRecord();
+    assert.equal(second?.build.level, 90);
+    assert.equal(fetchCalls, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousConfig === undefined) delete process.env.POE2_MCP_CONFIG_DIR;
+    else process.env.POE2_MCP_CONFIG_DIR = previousConfig;
   }
 });

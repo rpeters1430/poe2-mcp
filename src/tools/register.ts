@@ -462,6 +462,11 @@ export function registerTools(server: McpServer, log: ClientLogTailer): void {
           if (!record) throw primaryError;
           activeBuild = record;
           inventory = pobBuildToInventorySnapshot(record.build, record.identity.characterName ?? undefined);
+          // Intentionally `.league` (the display name, e.g. "Rise of the
+          // Abyssal"), not `.leagueUrl`: that field is poe.ninja's own URL
+          // slug (e.g. "roa") for poe.ninja's site, not GGG's. The PoE
+          // trade site's league URL segment matches the display name, same
+          // as GGG's own character API `league` field used just above.
           resolvedLeague ??= record.identity.league ?? undefined;
         }
         if (!resolvedLeague) {
@@ -756,6 +761,10 @@ export function registerTools(server: McpServer, log: ClientLogTailer): void {
               (candidate) => candidate.name.toLowerCase() === char!.toLowerCase()
             );
             if (match) {
+              // Prefer poe.ninja's own leagueUrl slug over whatever the
+              // caller passed -- a display name like "Rise of the Abyssal"
+              // does not reliably normalize to the real slug ("roa").
+              l = match.leagueUrl;
               identityLeague = match.league;
               sourceUpdatedAt = match.updated;
             }

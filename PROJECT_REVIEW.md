@@ -24,7 +24,7 @@ Recommendation: complete the P0 items before adding more data sources. Then fix 
 
 - `npm ci`: passed.
 - `npm run build`: passed with TypeScript strict mode.
-- Tests: the original 37 passed; milestone one expanded the suite to 53 after review follow-ups, and milestone two now has 56 passing tests through the portable `npm test` command.
+- Tests: the original 37 passed; milestone one expanded the suite to 53 after review follow-ups, and milestone two now has 70 passing tests through the portable `npm test` command.
 - `npm audit --json`: 0 known vulnerabilities across the installed dependency graph.
 - `npm pack --dry-run`: milestone one builds a 124.7 kB tarball containing 96 files, including all source/tests/maps and both generated `dist` files; package trimming remains a P2 item.
 - GitHub baseline: no project-owned `.github/workflows` files. Milestone one adds `.github/workflows/ci.yml`; branch protection remains a repository-setting follow-up.

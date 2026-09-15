@@ -83,6 +83,20 @@ test("applies increased Armour/Evasion/ES from gear with no local base as a glob
   assert.equal(defenses.evasion, 220);
 });
 
+test("always applies a socketed Rune's defense mods as global, even on an item with a displayed property", () => {
+  const defenses = computeDefenses(snapshot([
+    item({
+      slot: "BodyArmour",
+      properties: [{ name: "Armour", values: [["400", 0]] }],
+      // Unlike the item's own affix text, a socketed Rune's stats are never
+      // already baked into the displayed Armour property above.
+      socketedMods: ["20% increased Armour", "+30 to maximum Energy Shield"],
+    }),
+  ]));
+  assert.equal(defenses.armour, 480);
+  assert.equal(defenses.energyShield, 30);
+});
+
 test("blockChancePercent is null rather than 0 when no gear grants block", () => {
   const defenses = computeDefenses(snapshot([item({})]));
   assert.equal(defenses.blockChancePercent, null);

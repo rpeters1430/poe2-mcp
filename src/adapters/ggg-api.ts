@@ -133,8 +133,12 @@ function toInventoryItem(item: RawItem): InventoryItem {
       ...(item.explicitMods ?? []),
       ...(item.craftedMods ?? []),
       ...(item.fracturedMods ?? []),
-      ...socketedItemMods(item),
     ],
+    // Kept out of `mods` -- unlike this item's own affixes, a socketed
+    // Rune/Soul Core's stats are never already baked into the displayed
+    // Armour/Evasion/ES property above, so defense aggregation must always
+    // treat them as a global bonus (see computeDefenses).
+    socketedMods: socketedItemMods(item),
     properties: toItemProperties(item),
     corrupted: item.corrupted ?? null,
   };
