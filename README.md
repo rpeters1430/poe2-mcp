@@ -131,7 +131,7 @@ files above are usable verbatim.
 | `set_active_character` | server → AI | Pin the default character for the tools below |
 | `set_account_name` | AI → server | Set PoE account name (e.g. `rpeters1428-1042`) for poe.ninja queries |
 | `import_poe_ninja_character` | server → AI | Import character build directly from poe.ninja profile/URL |
-| `get_passive_tree` | server → AI | Allocated passive node hashes + jewel data (names not resolved yet) |
+| `get_passive_tree` | server → AI | Allocated passive nodes, resolved to names/stats where possible, + jewel data |
 | `get_defenses` | server → AI | Gear-only life/ES/armour/evasion/resistances/block/attributes |
 | `get_offense_stats` | server → AI | Gear-only weapon damage/crit/speed stats (not a DPS number) |
 | `compare_item` | server → AI | Diff a pasted item against what's currently equipped in that slot |
@@ -164,6 +164,26 @@ stale — but if you notice events not firing, `tail -f` your real
 request), not a live feed — there's no current HP/mana/position here, by
 design of GGG's own API, independent of anything this project chose to
 build or not build.
+
+## A note on `get_passive_tree`'s node name resolution
+
+`src/adapters/tree-data.ts` resolves the raw allocated passive node hashes
+`get_passive_tree` returns to names/stats, using GGG's own official PoE2 tree
+export (`github.com/grindinggear/poe2-skilltree-export`'s `data.json`),
+cached locally for 24h since it's patch-versioned data, not per-request. This
+works entirely independently of the GGG developer API/client ID: it's a
+public, unauthenticated file, so it resolves node names for
+`import_pob_build`/`import_poe_ninja_character` builds too, not just
+`get_passive_tree` via the GGG API path. The schema was verified against a
+live fetch of the real ~5MB `data.json`: nodes are keyed by id in the same
+id space as `passives.hashes`/PoB2's `<Spec nodes="...">`, with real fields
+`name`, `isKeystone`/`isNotable`/`isMastery`, `stats`, and `ascendancyId` (a
+slug like `"Ranger3"`, not the ascendancy's flavor name like "Deadeye" —
+this project doesn't map slot-to-flavor-name yet). `resolveNodeNames` never
+throws and always returns one entry per allocated hash (with `name: null`
+for anything it can't resolve), so the raw hash is never lost even if a
+future patch changes the schema; if resolution starts coming back empty,
+re-fetch `data.json` and check the field candidates in `tree-data.ts`.
 
 ## A note on the Path of Building 2 tools
 
@@ -203,6 +223,8 @@ deliberately not a DPS number. Each response's own `note` field says so.
 Affix text parsing is regex-based, same "best-effort, keep the raw text so
 nothing is silently dropped" approach as the log-line patterns above — if
 you notice a common affix not being picked up, extend the `PATTERNS` table
-in `mod-parser.ts`. A PoB2-backed calculation engine and a local, patch-
-versioned game-data set (to resolve passive hashes and skill gems to names)
-are deliberately not part of this milestone.
+in `mod-parser.ts`. Passive node hashes are now resolved to names/stats (see
+`get_passive_tree`'s note above), but that resolved data isn't folded into
+these aggregates yet — a PoB2-backed calculation engine and parsing passive
+node stat text the same way gear affixes are parsed are deliberately not
+part of this milestone. Skill/support gem scaling is also out of scope here.

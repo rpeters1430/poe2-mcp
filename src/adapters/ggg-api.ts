@@ -1,5 +1,6 @@
 import { GGG_API_BASE, GGG_REALM, userAgent } from "../config.js";
 import { getAccessToken } from "./ggg-oauth.js";
+import { resolveNodeNames } from "./tree-data.js";
 import type { CharacterState, InventoryItem, InventorySnapshot, ItemProperty, PassiveTreeSnapshot } from "../types.js";
 
 /**
@@ -169,16 +170,16 @@ export async function fetchInventorySnapshot(name: string): Promise<InventorySna
 
 export async function fetchPassiveTree(name: string): Promise<PassiveTreeSnapshot> {
   const c = await fetchRawCharacter(name);
+  const allocatedHashes = c.passives?.hashes ?? [];
+  const { resolvedNodes, note } = await resolveNodeNames(allocatedHashes);
   return {
     source: "ggg_api",
     fetchedAt: new Date().toISOString(),
     characterName: c.name,
     ascendancyClass: c.ascendancyClass ?? null,
-    allocatedHashes: c.passives?.hashes ?? [],
+    allocatedHashes,
+    resolvedNodes,
     jewelData: c.passives?.jewel_data ?? {},
-    note:
-      "Allocated passive node hashes only -- not resolved to node names/effects. That needs a local, patch-" +
-      "versioned passive-tree dataset this server doesn't have yet (a planned future milestone); until then, " +
-      "cross-reference hashes against the tree at https://www.pathofexile.com/passive-skill-tree if you need names.",
+    note,
   };
 }

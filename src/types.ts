@@ -72,13 +72,41 @@ export interface InventorySnapshot {
 // downstream mistakes an aggregate for a final character total.
 // ---------------------------------------------------------------------------
 
+/**
+ * One allocated passive node resolved against the local tree dataset (see
+ * `src/adapters/tree-data.ts`). `name`/stat fields are null/empty when the id
+ * wasn't found in the dataset -- a stale cache after a patch, or the node
+ * simply not being resolvable yet -- never when a lookup wasn't attempted;
+ * `resolvedNodes` in `PassiveTreeSnapshot` always has one entry per hash in
+ * `allocatedHashes`, in the same order, so the raw id is never lost even when
+ * the name is.
+ */
+export interface ResolvedPassiveNode {
+  id: number;
+  name: string | null;
+  isKeystone: boolean;
+  isNotable: boolean;
+  isMastery: boolean;
+  /**
+   * Set when this node belongs to a specific ascendancy class -- a slug like
+   * "Ranger3" (base class + ascendancy slot number, per GGG's official tree
+   * export), NOT the ascendancy's flavor display name (e.g. "Deadeye"). This
+   * project has no ascendancy-slot-to-display-name mapping yet.
+   */
+  ascendancyId: string | null;
+  /** Raw stat description lines for this node, unparsed (same philosophy as InventoryItem.mods). */
+  stats: string[];
+}
+
 export interface PassiveTreeSnapshot {
   source: "ggg_api" | "pob_import" | "poe_ninja";
   fetchedAt: string;
   characterName: string;
   ascendancyClass: string | null;
-  /** Allocated passive tree node hashes. Not resolved to names/effects -- see `note`. */
+  /** Allocated passive tree node hashes, unresolved. Kept alongside `resolvedNodes` regardless of resolution success. */
   allocatedHashes: number[];
+  /** `allocatedHashes` resolved to names/stats, in the same order -- see `note` for how/whether resolution succeeded. */
+  resolvedNodes: ResolvedPassiveNode[];
   /** Raw jewel_data from GGG's API, keyed by socket, unparsed. */
   jewelData: Record<string, unknown>;
   note: string;
