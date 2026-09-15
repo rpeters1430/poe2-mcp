@@ -1,19 +1,15 @@
 import { userAgent } from "../config.js";
 import { parseMods, sumStat } from "../build/mod-parser.js";
 import { normalizeEquipmentSlot } from "../build/slots.js";
-import type { InventoryItem, InventorySnapshot, ItemProperty, ParsedItemText } from "../types.js";
+import type {
+  InventoryItem, InventorySnapshot, ItemProperty, ParsedItemText,
+  TradeCandidate, TradePriority, TradeUpgradeResult,
+} from "../types.js";
 
 const TRADE_BASE = "https://www.pathofexile.com";
 const MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 10_000;
 const METADATA_TTL_MS = 60 * 60 * 1000;
-
-export type TradePriority =
-  | "maximum_life"
-  | "fire_resistance"
-  | "cold_resistance"
-  | "lightning_resistance"
-  | "chaos_resistance";
 
 export interface FindTradeUpgradesOptions {
   inventory: InventorySnapshot;
@@ -213,7 +209,7 @@ function toParsedItem(item: TradeApiItem): ParsedItemText {
   };
 }
 
-export async function findTradeUpgrades(options: FindTradeUpgradesOptions): Promise<unknown> {
+export async function findTradeUpgrades(options: FindTradeUpgradesOptions): Promise<TradeUpgradeResult> {
   const priorities = [...new Set(options.priorities)];
   if (priorities.length === 0) throw new Error("At least one upgrade priority is required.");
   const minimumGain = options.minimumGain ?? 1;
@@ -275,7 +271,7 @@ export async function findTradeUpgrades(options: FindTradeUpgradesOptions): Prom
     }
   }
 
-  const candidates = fetched.flatMap((entry) => {
+  const candidates: TradeCandidate[] = fetched.flatMap((entry): TradeCandidate[] => {
     if (!entry.item) return [];
     const parsed = toParsedItem(entry.item);
     const candidateParsed = parseMods(parsed.mods);
@@ -288,7 +284,9 @@ export async function findTradeUpgrades(options: FindTradeUpgradesOptions): Prom
       name: parsed.name,
       baseType: parsed.baseType,
       itemLevel: parsed.itemLevel,
-      price: entry.listing?.price ?? null,
+      price: entry.listing?.price
+        ? { amount: entry.listing.price.amount ?? null, currency: entry.listing.price.currency ?? null }
+        : null,
       priorityDeltas: deltas,
       improvesAllPriorities: priorities.every((priority) => deltas[priority] >= minimumGain),
       mods: parsed.mods,

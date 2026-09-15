@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 import { configDir, resolveAccountName, resolvePobBuildsDir } from "../config.js";
 import type {
   ActiveBuildIdentity,
@@ -24,7 +25,7 @@ function activeBuildPath(): string {
 }
 
 function emptyIdentity(): ActiveBuildIdentity {
-  return { accountName: null, characterName: null, league: null };
+  return { accountName: null, characterName: null, league: null, leagueUrl: null };
 }
 
 function isRecord(value: unknown): value is ActiveBuildRecord {
@@ -37,7 +38,7 @@ function isRecord(value: unknown): value is ActiveBuildRecord {
 
 function writeRecord(record: ActiveBuildRecord): void {
   const target = activeBuildPath();
-  const temp = `${target}.tmp-${process.pid}-${Date.now()}`;
+  const temp = `${target}.tmp-${process.pid}-${Date.now()}-${crypto.randomBytes(6).toString("hex")}`;
   try {
     fs.writeFileSync(temp, JSON.stringify(record, null, 2), { encoding: "utf8", mode: 0o600 });
     fs.renameSync(temp, target);
@@ -132,21 +133,33 @@ async function refreshRecord(record: ActiveBuildRecord, force: boolean): Promise
   }
 
   if (record.origin === "poe_ninja" || record.origin === "auto_poe_ninja") {
-    const { accountName, characterName, league } = record.identity;
-    if (!accountName || !characterName || !league) {
+    const { accountName, characterName, league, leagueUrl } = record.identity;
+    if (!accountName || !characterName || !(leagueUrl ?? league)) {
       throw new Error("This poe.ninja build has incomplete identity metadata; import it again.");
     }
     const age = Date.now() - Date.parse(record.refreshedAt);
     if (force || age >= ACTIVE_BUILD_REFRESH_MS) {
-      const build = await fetchNinjaAsPobBuild(accountName, league, characterName);
-      let sourceUpdatedAt: string | undefined;
       try {
-        const match = (await fetchNinjaCharacters(accountName)).find(
-          (candidate) => candidate.name.toLowerCase() === characterName.toLowerCase()
-        );
-        sourceUpdatedAt = match?.updated;
-      } catch {}
-      return replaceRefreshed(record, build, undefined, sourceUpdatedAt);
+        const build = await fetchNinjaAsPobBuild(accountName, leagueUrl ?? league!, characterName);
+        let sourceUpdatedAt: string | undefined;
+        try {
+          const match = (await fetchNinjaCharacters(accountName)).find(
+            (candidate) => candidate.name.toLowerCase() === characterName.toLowerCase()
+          );
+          sourceUpdatedAt = match?.updated;
+        } catch {}
+        return replaceRefreshed(record, build, undefined, sourceUpdatedAt);
+      } catch (err) {
+        // An explicit refresh_active_build call should fail loudly. A passive
+        // TTL-triggered refresh (every tool call routes through this) must
+        // not turn a transient poe.ninja outage/429 into a hard failure for
+        // every inventory/defense/offense/trade call -- keep serving the
+        // last-known-good snapshot; get_active_build_status still reports it
+        // as stale via its own age check.
+        if (force) throw err;
+        console.error(`[poe2-mcp-server] poe.ninja refresh failed for ${characterName}, keeping last-known-good build:`, err);
+        return record;
+      }
     }
   }
   return record;
@@ -154,22 +167,37 @@ async function refreshRecord(record: ActiveBuildRecord, force: boolean): Promise
 
 export async function resolveActiveBuildRecord(force = false): Promise<ActiveBuildRecord | null> {
   const stored = loadActiveBuildRecord();
-  if (stored) return refreshRecord(stored, force);
+  // Only an explicitly pinned record short-circuits straight to a refresh of
+  // itself. An automatically-selected record must not go sticky: re-run the
+  // selection cascade every time so a newer local PoB file, or poe.ninja
+  // reporting a different "current" character/league, actually takes over
+  // instead of this resolver refreshing whatever was auto-picked once.
+  if (stored?.pinned) return refreshRecord(stored, force);
+  return resolveAutomaticBuildRecord(stored);
+}
 
+async function resolveAutomaticBuildRecord(stored: ActiveBuildRecord | null): Promise<ActiveBuildRecord | null> {
   const pobDir = resolvePobBuildsDir();
   if (pobDir) {
     const recent = listRecentPobBuilds(pobDir);
     if (recent.length > 0) {
+      const candidate = recent[0];
+      if (stored?.origin === "auto_pob_file" && stored.sourcePath === candidate.path) {
+        // Still the most recently modified local build -- reuse/refresh it
+        // in place by mtime instead of reparsing on every call.
+        return refreshRecord(stored, false);
+      }
       try {
-        const build = parsePobXml(await resolvePobXml(readPobBuildFile(recent[0].path, pobDir)));
+        const build = parsePobXml(await resolvePobXml(readPobBuildFile(candidate.path, pobDir)));
         return saveActiveBuild(build, {
           origin: "auto_pob_file",
           pinned: false,
-          sourcePath: recent[0].path,
-          sourceModifiedAt: recent[0].modifiedAt,
+          sourcePath: candidate.path,
+          sourceModifiedAt: candidate.modifiedAt,
         });
       } catch (err) {
-        console.error(`[poe2-mcp-server] Failed to auto-load local PoB build from ${recent[0].path}:`, err);
+        console.error(`[poe2-mcp-server] Failed to auto-load local PoB build from ${candidate.path}:`, err);
+        if (stored?.origin === "auto_pob_file") return stored;
       }
     }
   }
@@ -180,19 +208,30 @@ export async function resolveActiveBuildRecord(force = false): Promise<ActiveBui
       const chars = await fetchNinjaCharacters(account);
       const current = chars.find((c) => c.isCurrent) ?? chars[0];
       if (current) {
+        if (
+          stored?.origin === "auto_poe_ninja" &&
+          stored.identity.accountName === account &&
+          stored.identity.characterName === current.name
+        ) {
+          return refreshRecord(stored, false);
+        }
         const build = await fetchNinjaAsPobBuild(account, current.leagueUrl, current.name);
         return saveActiveBuild(build, {
           origin: "auto_poe_ninja",
           pinned: false,
           sourceUpdatedAt: current.updated,
-          identity: { accountName: account, characterName: current.name, league: current.league },
+          identity: {
+            accountName: account, characterName: current.name,
+            league: current.league, leagueUrl: current.leagueUrl,
+          },
         });
       }
     } catch (err) {
       console.error(`[poe2-mcp-server] Failed to auto-load character from poe.ninja for ${account}:`, err);
+      if (stored?.origin === "auto_poe_ninja") return stored;
     }
   }
-  return null;
+  return stored ?? null;
 }
 
 export async function resolveActiveBuild(): Promise<PobBuildSnapshot | null> {

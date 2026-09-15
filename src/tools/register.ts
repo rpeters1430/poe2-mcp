@@ -474,9 +474,7 @@ export function registerTools(server: McpServer, log: ClientLogTailer): void {
           maxPrice, currency, maxRequiredLevel, resultLimit,
         });
         return jsonResult(
-          activeBuild
-            ? { ...(result as Record<string, unknown>), activeBuild: activeBuildContext(activeBuild) }
-            : result
+          activeBuild ? { ...result, activeBuild: activeBuildContext(activeBuild) } : result
         );
       } catch (err) { return errorResult(err); }
     }
@@ -769,7 +767,10 @@ export function registerTools(server: McpServer, log: ClientLogTailer): void {
           origin: "poe_ninja",
           pinned: true,
           sourceUpdatedAt,
-          identity: { accountName: acc, characterName: char, league: identityLeague ?? l },
+          // `l` is the leagueUrl slug used for this fetch (and the one a
+          // later refresh must reuse); `identityLeague` is only the display
+          // label poe.ninja returned, which can differ from the slug.
+          identity: { accountName: acc, characterName: char, league: identityLeague ?? l, leagueUrl: l },
         });
         return jsonResult({
           imported: true,

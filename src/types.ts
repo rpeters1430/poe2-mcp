@@ -274,7 +274,10 @@ export type ActiveBuildOrigin =
 export interface ActiveBuildIdentity {
   accountName: string | null;
   characterName: string | null;
+  /** Display label (e.g. "Rise of the Abyssal"), for identity/reporting only. */
   league: string | null;
+  /** poe.ninja's URL slug for the league (e.g. "roa"), used to refresh the build -- can differ from `league`. */
+  leagueUrl: string | null;
 }
 
 export interface ActiveBuildRecord {
@@ -309,6 +312,48 @@ export interface ActiveBuildStatus {
     level: number | null;
     equipmentCount: number;
   } | null;
+}
+
+export type TradePriority =
+  | "maximum_life"
+  | "fire_resistance"
+  | "cold_resistance"
+  | "lightning_resistance"
+  | "chaos_resistance";
+
+export interface TradeCandidate {
+  id: string | null;
+  name: string;
+  baseType: string;
+  itemLevel: number | null;
+  price: { amount: number | null; currency: string | null } | null;
+  priorityDeltas: Record<TradePriority, number>;
+  improvesAllPriorities: boolean;
+  mods: string[];
+  score: number;
+}
+
+export interface TradeUpgradeResult {
+  source: "poe_trade_site";
+  fetchedAt: string;
+  apiStatus: "undocumented_official_site_endpoint";
+  league: string;
+  searchUrl: string;
+  totalMatches: number;
+  currentItem: { name: string; slot: string | null; priorityValues: Record<TradePriority, number> } | null;
+  appliedFilters: {
+    slot: string;
+    category: string;
+    priorities: TradePriority[];
+    minimumCandidateValues: Record<TradePriority, number>;
+    maxPrice: { amount: number; currency: string };
+    maxRequiredLevel: number | null;
+    onlineOnly: boolean;
+  };
+  candidates: TradeCandidate[];
+  warning: string | null;
+  rateLimit: Record<string, string>;
+  note: string;
 }
 
 export type GameEventType =
