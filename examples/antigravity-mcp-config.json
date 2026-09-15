@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "poe2": {
+      "command": "node",
+      "args": ["C:\\path\\to\\poe2-mcp-server\\dist\\index.js"],
+      "env": {
+        "POE2_ACCOUNT_NAME": "your-account-name-1234"
+      }
+    }
+  }
+}

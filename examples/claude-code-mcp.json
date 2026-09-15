@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "poe2": {
+      "command": "node",
+      "args": ["/absolute/path/to/poe2-mcp-server/dist/index.js"],
+      "env": {
+        "POE2_GGG_CLIENT_ID": "your-registered-client-id",
+        "POE2_CONTACT_EMAIL": "you@example.com"
+      }
+    }
+  }
+}

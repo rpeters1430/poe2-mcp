@@ -1,0 +1,10 @@
+# Add this block to ~/.codex/config.toml (or run:
+# codex mcp add poe2 -- node /absolute/path/to/poe2-mcp-server/dist/index.js)
+
+[mcp_servers.poe2]
+command = "node"
+args = ["/absolute/path/to/poe2-mcp-server/dist/index.js"]
+
+[mcp_servers.poe2.env]
+POE2_GGG_CLIENT_ID = "your-registered-client-id"
+POE2_CONTACT_EMAIL = "you@example.com"
