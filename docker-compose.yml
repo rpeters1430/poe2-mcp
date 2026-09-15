@@ -1,0 +1,28 @@
+services:
+  poe2-mcp-server:
+    build: .
+    image: poe2-mcp-server
+    restart: unless-stopped
+    ports:
+      - "${POE2_SERVE_PORT:-8787}:8787"
+    environment:
+      - POE2_GGG_CLIENT_ID=${POE2_GGG_CLIENT_ID}
+      - POE2_CONTACT_EMAIL=${POE2_CONTACT_EMAIL}
+      - POE2_ACCOUNT_NAME=${POE2_ACCOUNT_NAME}
+      - POE2_WEB_TOKEN=${POE2_WEB_TOKEN}
+      - POE2_TRADE_POESESSID=${POE2_TRADE_POESESSID}
+      # Auto-detection candidates in src/config.ts are gated on the
+      # container's own platform (linux), not the Windows host's, so these
+      # three must be set explicitly rather than relying on auto-detect.
+      - POE2_MCP_CONFIG_DIR=/config
+      - POE2_CLIENT_LOG_PATH=/game-logs/Client.txt
+      - POE2_POB_BUILDS_PATH=/pob-builds
+    volumes:
+      # Windows host paths, e.g.:
+      #   POE2_CONFIG_DIR_HOST=C:\Users\you\.config\poe2-mcp-server
+      #   POE2_CLIENT_LOG_DIR_HOST=C:\Program Files (x86)\Steam\steamapps\common\Path of Exile 2\logs
+      #   POE2_POB_BUILDS_DIR_HOST=C:\Users\you\Documents\Path of Building (PoE2)\Builds
+      # Set these in a local .env file (see README.md's Docker section).
+      - ${POE2_CONFIG_DIR_HOST}:/config
+      - ${POE2_CLIENT_LOG_DIR_HOST}:/game-logs:ro
+      - ${POE2_POB_BUILDS_DIR_HOST}:/pob-builds:ro
