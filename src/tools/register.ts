@@ -1,4 +1,5 @@
 import { z } from "zod";
+import fs from "node:fs";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ClientLogTailer } from "../adapters/client-log.js";
 import {
@@ -12,12 +13,12 @@ import { computeDefenses } from "../build/defenses.js";
 import { computeOffenseStats } from "../build/offense.js";
 import { parseItemText } from "../build/item-text.js";
 import { compareItem } from "../build/compare.js";
-import { isPobRunning, listRecentPobBuilds, readPobBuildFile } from "../adapters/pob.js";
+import { isPobRunning, listRecentPobBuilds, readPobBuildFile, validatePobBuildFile } from "../adapters/pob.js";
 import { resolveAccountName, saveAccountName, resolvePobBuildsDir } from "../config.js";
 import { resolvePobXml } from "../build/pob-decode.js";
 import { parsePobXml } from "../build/pob-parser.js";
 import { dispatchAdvisory } from "../advisory/dispatch.js";
-import type { AdvisoryAction, InventorySnapshot } from "../types.js";
+import type { ActiveBuildRecord, AdvisoryAction, InventorySnapshot } from "../types.js";
 import {
   fetchNinjaCharacters,
   fetchNinjaAsPobBuild,
@@ -25,11 +26,15 @@ import {
 } from "../adapters/poe-ninja.js";
 import {
   saveActiveBuild,
-  resolveActiveBuild,
+  resolveActiveBuildRecord,
+  getActiveBuildStatus,
+  refreshActiveBuild,
+  clearActiveBuild,
   pobBuildToInventorySnapshot,
   pobBuildToPassiveTree,
   pobBuildToCharacterState,
 } from "../adapters/active-build.js";
+import { findTradeUpgrades } from "../adapters/trade.js";
 
 function jsonResult(data: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] };
@@ -38,6 +43,17 @@ function jsonResult(data: unknown) {
 function errorResult(err: unknown) {
   const message = err instanceof Error ? err.message : String(err);
   return { content: [{ type: "text" as const, text: `Error: ${message}` }], isError: true };
+}
+
+function activeBuildContext(record: ActiveBuildRecord) {
+  const ageMs = Math.max(0, Date.now() - Date.parse(record.refreshedAt));
+  return {
+    origin: record.origin,
+    pinned: record.pinned,
+    refreshedAt: record.refreshedAt,
+    ageMs,
+    identity: record.identity,
+  };
 }
 
 const eventTypeEnum = z.enum([
@@ -155,9 +171,12 @@ export function registerTools(server: McpServer, log: ClientLogTailer): void {
         primaryError = err;
       }
       if (characterName) return errorResult(primaryError);
-      const active = await resolveActiveBuild();
+      const active = await resolveActiveBuildRecord();
       if (active) {
-        return jsonResult(pobBuildToInventorySnapshot(active));
+        return jsonResult({
+          ...pobBuildToInventorySnapshot(active.build, active.identity.characterName ?? undefined),
+          activeBuild: activeBuildContext(active),
+        });
       }
       return errorResult(primaryError);
     }
@@ -215,6 +234,54 @@ export function registerTools(server: McpServer, log: ClientLogTailer): void {
   );
 
   server.registerTool(
+    "get_active_build_status",
+    {
+      title: "Get active build status",
+      description:
+        "Show the active build's source, pinned/automatic selection, known character and league identity, " +
+        "refresh age, and a compact build summary. Local paths are reduced to a filename.",
+      inputSchema: {},
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    async () => {
+      try { return jsonResult(await getActiveBuildStatus()); }
+      catch (err) { return errorResult(err); }
+    }
+  );
+
+  server.registerTool(
+    "refresh_active_build",
+    {
+      title: "Refresh active build",
+      description:
+        "Reload the same pinned/selected build from its PoB file or poe.ninja identity. Pasted share codes/XML " +
+        "cannot be refreshed and must be imported again.",
+      inputSchema: {},
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+    },
+    async () => {
+      try {
+        await refreshActiveBuild();
+        return jsonResult(await getActiveBuildStatus());
+      } catch (err) { return errorResult(err); }
+    }
+  );
+
+  server.registerTool(
+    "clear_active_build",
+    {
+      title: "Clear active build",
+      description: "Remove the server's local active-build selection. Original PoB files and remote profiles are not modified.",
+      inputSchema: {},
+      annotations: { readOnlyHint: false, destructiveHint: true },
+    },
+    async () => {
+      try { return jsonResult({ cleared: clearActiveBuild() }); }
+      catch (err) { return errorResult(err); }
+    }
+  );
+
+  server.registerTool(
     "get_passive_tree",
     {
       title: "Get passive tree allocation",
@@ -231,9 +298,12 @@ export function registerTools(server: McpServer, log: ClientLogTailer): void {
         return jsonResult(await fetchPassiveTree(name));
       } catch (err) {
         if (characterName) return errorResult(err);
-        const active = await resolveActiveBuild();
+        const active = await resolveActiveBuildRecord();
         if (active) {
-          return jsonResult(await pobBuildToPassiveTree(active));
+          return jsonResult({
+            ...await pobBuildToPassiveTree(active.build, active.identity.characterName ?? undefined),
+            activeBuild: activeBuildContext(active),
+          });
         }
         return errorResult(err);
       }
@@ -258,13 +328,14 @@ export function registerTools(server: McpServer, log: ClientLogTailer): void {
         return jsonResult(computeDefenses(await fetchInventorySnapshot(name)));
       } catch (err) {
         if (characterName) return errorResult(err);
-        const active = await resolveActiveBuild();
+        const active = await resolveActiveBuildRecord();
         if (active) {
-          const inventory = pobBuildToInventorySnapshot(active);
+          const inventory = pobBuildToInventorySnapshot(active.build, active.identity.characterName ?? undefined);
           const computed = computeDefenses(inventory);
           return jsonResult({
             ...computed,
-            pobComputedStats: active.playerStats?.slice(0, 30),
+            pobComputedStats: active.build.playerStats?.slice(0, 30),
+            activeBuild: activeBuildContext(active),
             note:
               "Computed from active PoB / poe.ninja build. Includes PoB's simulated stats alongside gear-only aggregations.",
           });
@@ -292,9 +363,12 @@ export function registerTools(server: McpServer, log: ClientLogTailer): void {
         return jsonResult(computeOffenseStats(await fetchInventorySnapshot(name)));
       } catch (err) {
         if (characterName) return errorResult(err);
-        const active = await resolveActiveBuild();
+        const active = await resolveActiveBuildRecord();
         if (active) {
-          return jsonResult(computeOffenseStats(pobBuildToInventorySnapshot(active)));
+          return jsonResult({
+            ...computeOffenseStats(pobBuildToInventorySnapshot(active.build, active.identity.characterName ?? undefined)),
+            activeBuild: activeBuildContext(active),
+          });
         }
         return errorResult(err);
       }
@@ -329,19 +403,85 @@ export function registerTools(server: McpServer, log: ClientLogTailer): void {
           inventory = await fetchInventorySnapshot(name);
         } catch (primaryError) {
           if (characterName) throw primaryError;
-          const active = await resolveActiveBuild();
+          const active = await resolveActiveBuildRecord();
           if (!active) {
             throw new Error(
               "No inventory available from GGG API and no active PoB/poe.ninja build found. " +
                 "Import a build using import_pob_build or configure an account with set_account_name."
             );
           }
-          inventory = pobBuildToInventorySnapshot(active);
+          inventory = pobBuildToInventorySnapshot(active.build, active.identity.characterName ?? undefined);
+          return jsonResult({
+            ...compareItem(inventory, parseItemText(itemText), slot),
+            activeBuild: activeBuildContext(active),
+          });
         }
         return jsonResult(compareItem(inventory, parseItemText(itemText), slot));
       } catch (err) {
         return errorResult(err);
       }
+    }
+  );
+
+  server.registerTool(
+    "find_trade_upgrades",
+    {
+      title: "Find live PoE2 trade upgrades",
+      description:
+        "Search live Path of Exile 2 listings for an item that improves every requested stat over the currently " +
+        "equipped slot, enforce budget and required-level limits, rank fetched candidates, and return the official " +
+        "trade search URL. Uses GGG's official trade-site endpoint, which is not part of the published developer API " +
+        "and may require POE2_TRADE_POESESSID.",
+      inputSchema: {
+        slot: z.enum(["Helm", "BodyArmour", "Gloves", "Boots", "Belt", "Amulet", "Ring", "Ring2", "Offhand"]),
+        priorities: z.array(z.enum([
+          "maximum_life", "fire_resistance", "cold_resistance", "lightning_resistance", "chaos_resistance",
+        ])).min(1).describe("Stats each candidate must improve over the equipped item"),
+        minimumGain: z.number().int().min(1).max(200).optional().describe("Minimum gain for every priority (default 1)"),
+        maxPrice: z.number().positive().max(1_000_000),
+        currency: z.string().min(1).max(32).regex(/^[a-z0-9-]+$/i).describe("Trade currency code, e.g. exalted, chaos, divine"),
+        maxRequiredLevel: z.number().int().min(1).max(100).optional(),
+        league: z.string().min(1).max(100).optional().describe("Inferred from character/build identity when possible"),
+        characterName: z.string().optional().describe("Defaults to the current character or active build"),
+        resultLimit: z.number().int().min(1).max(10).optional(),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    async ({ slot, priorities, minimumGain, maxPrice, currency, maxRequiredLevel, league, characterName, resultLimit }) => {
+      try {
+        let inventory: InventorySnapshot;
+        let resolvedLeague = league;
+        let activeBuild: ActiveBuildRecord | null = null;
+        try {
+          const name = await resolveCharacterName(characterName, log);
+          inventory = await fetchInventorySnapshot(name);
+          if (!resolvedLeague) resolvedLeague = (await fetchCharacterState(name)).league ?? undefined;
+        } catch (primaryError) {
+          if (characterName) throw primaryError;
+          const record = await resolveActiveBuildRecord();
+          if (!record) throw primaryError;
+          activeBuild = record;
+          inventory = pobBuildToInventorySnapshot(record.build, record.identity.characterName ?? undefined);
+          // Intentionally `.league` (the display name, e.g. "Rise of the
+          // Abyssal"), not `.leagueUrl`: that field is poe.ninja's own URL
+          // slug (e.g. "roa") for poe.ninja's site, not GGG's. The PoE
+          // trade site's league URL segment matches the display name, same
+          // as GGG's own character API `league` field used just above.
+          resolvedLeague ??= record.identity.league ?? undefined;
+        }
+        if (!resolvedLeague) {
+          throw new Error(
+            "A league is required because the active build has no verified league identity. Pass league explicitly or import a poe.ninja character."
+          );
+        }
+        const result = await findTradeUpgrades({
+          inventory, league: resolvedLeague, slot, priorities, minimumGain,
+          maxPrice, currency, maxRequiredLevel, resultLimit,
+        });
+        return jsonResult(
+          activeBuild ? { ...result, activeBuild: activeBuildContext(activeBuild) } : result
+        );
+      } catch (err) { return errorResult(err); }
     }
   );
 
@@ -476,18 +616,27 @@ export function registerTools(server: McpServer, log: ClientLogTailer): void {
           );
         }
         let raw: string;
+        let sourceFile: string | null = null;
+        let sourceModifiedAt: string | null = null;
         if (filePath) {
           const buildsDir = resolvePobBuildsDir();
           if (!buildsDir) {
             return errorResult(new Error("Set POE2_POB_BUILDS_PATH before importing a local build file."));
           }
-          raw = readPobBuildFile(filePath, buildsDir);
+          sourceFile = validatePobBuildFile(filePath, buildsDir);
+          sourceModifiedAt = fs.statSync(sourceFile).mtime.toISOString();
+          raw = readPobBuildFile(sourceFile, buildsDir);
         } else {
           raw = code!;
         }
         const xml = await resolvePobXml(raw);
         const parsed = parsePobXml(xml);
-        saveActiveBuild(parsed);
+        saveActiveBuild(parsed, {
+          origin: filePath ? "explicit_file" : "explicit_code",
+          pinned: true,
+          sourcePath: sourceFile,
+          sourceModifiedAt,
+        });
         return jsonResult(parsed);
       } catch (err) {
         return errorResult(err);
@@ -563,6 +712,8 @@ export function registerTools(server: McpServer, log: ClientLogTailer): void {
         let acc = accountName ?? resolveAccountName();
         let l = league;
         let char = characterName;
+        let identityLeague: string | undefined;
+        let sourceUpdatedAt: string | undefined;
 
         if (profileUrl) {
           const parsed = parseNinjaProfileUrl(profileUrl);
@@ -602,10 +753,34 @@ export function registerTools(server: McpServer, log: ClientLogTailer): void {
           }
           char = match.name;
           l = match.leagueUrl;
+          identityLeague = match.league;
+          sourceUpdatedAt = match.updated;
+        } else {
+          try {
+            const match = (await fetchNinjaCharacters(acc)).find(
+              (candidate) => candidate.name.toLowerCase() === char!.toLowerCase()
+            );
+            if (match) {
+              // Prefer poe.ninja's own leagueUrl slug over whatever the
+              // caller passed -- a display name like "Rise of the Abyssal"
+              // does not reliably normalize to the real slug ("roa").
+              l = match.leagueUrl;
+              identityLeague = match.league;
+              sourceUpdatedAt = match.updated;
+            }
+          } catch {}
         }
 
         const build = await fetchNinjaAsPobBuild(acc, l, char);
-        saveActiveBuild(build);
+        saveActiveBuild(build, {
+          origin: "poe_ninja",
+          pinned: true,
+          sourceUpdatedAt,
+          // `l` is the leagueUrl slug used for this fetch (and the one a
+          // later refresh must reuse); `identityLeague` is only the display
+          // label poe.ninja returned, which can differ from the slug.
+          identity: { accountName: acc, characterName: char, league: identityLeague ?? l, leagueUrl: l },
+        });
         return jsonResult({
           imported: true,
           source: "poe_ninja",

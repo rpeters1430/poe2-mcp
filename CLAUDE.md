@@ -21,17 +21,20 @@ npm run build   # tsc -p tsconfig.json -> dist/
 npm run dev     # tsx src/index.ts (run the server directly from TS, no build step)
 npm run auth    # tsx src/auth.ts  (one-time interactive GGG OAuth/PKCE flow)
 npm start       # node dist/index.js (run the built server)
-npm test        # tsx --test src/**/*.test.ts (node:test, no build step)
+npm test        # node --import tsx --test src/adapters/*.test.ts src/build/*.test.ts (node:test, no build step)
 ```
 
 Tests are colocated as `src/**/*.test.ts` next to the module they cover (e.g.
 `src/build/mod-parser.test.ts`), using node's built-in `node:test`/`node:assert`
 rather than a new dependency, and are excluded from `tsc`'s `include` so they
-never land in `dist/`. Coverage is currently limited to the pure functions
-under `src/build/` (mod/property/item-text parsing, defenses/offense
-aggregation, comparison, PoB decode/parse) — nothing that touches the network,
-the filesystem config paths, or the log tailer has tests yet. There is no lint
-config or CI in this repo currently. There's also no `--watch` script; use
+never land in `dist/`. Coverage covers the pure functions under `src/build/`
+(mod/property/item-text parsing, defenses/offense aggregation, comparison, PoB
+decode/parse) plus filesystem-backed active-build lifecycle tests
+(`active-build.test.ts`, using a temp config/builds dir) and mocked-network
+trade-search tests (`trade.test.ts`, stubbing `globalThis.fetch`) — the
+client-log tailer and the GGG API/OAuth adapters still have no tests. There is
+no lint config in this repo currently; CI (`.github/workflows/ci.yml`) runs
+build/test/audit/pack on Node 20/22/24. There's also no `--watch` script; use
 `npm run dev` for iteration.
 
 To sanity-check the server standalone against stdio (it just waits for an MCP

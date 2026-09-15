@@ -41,7 +41,9 @@ export function computeOffenseStats(inventory: InventorySnapshot): OffenseStats 
     .map(buildWeaponOffense);
 
   const allMods = parseMods(
-    inventory.equipment.filter((item) => contributesToActiveCharacter(item.slot)).flatMap((item) => item.mods)
+    inventory.equipment
+      .filter((item) => contributesToActiveCharacter(item.slot))
+      .flatMap((item) => [...item.mods, ...(item.socketedMods ?? [])])
   );
 
   return {

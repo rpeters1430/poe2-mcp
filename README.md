@@ -81,6 +81,14 @@ POE2_GGG_CLIENT_ID=... POE2_CONTACT_EMAIL=... node dist/index.js
 You should see it print the resolved `Client.txt` path (or a warning if it
 couldn't find one) and then sit waiting for an MCP client on stdio.
 
+### Optional: authenticated trade-site searches
+
+`find_trade_upgrades` first tries GGG's trade-site endpoints without a
+session. If the site returns HTTP 401/403, set `POE2_TRADE_POESESSID` in the
+server process environment to the value from your own logged-in Path of Exile
+browser session. Treat this value like a password: never paste it into an AI
+conversation, commit it, or put it in an example config.
+
 ## Wiring it into an AI CLI
 
 All three examples below assume you've already run steps 1–4 above; they
@@ -129,12 +137,16 @@ files above are usable verbatim.
 | `get_inventory` | server → AI | Equipped items + skill gems for character or active build |
 | `get_current_character` | server → AI | Which character other tools default to (explicit or log-inferred) |
 | `set_active_character` | server → AI | Pin the default character for the tools below |
+| `get_active_build_status` | server → AI | Active build source, identity, age, and refresh capability |
+| `refresh_active_build` | AI → server | Reload the same PoB file or poe.ninja character |
+| `clear_active_build` | AI → server | Clear only the local active-build selection |
 | `set_account_name` | AI → server | Set PoE account name (e.g. `rpeters1428-1042`) for poe.ninja queries |
 | `import_poe_ninja_character` | server → AI | Import character build directly from poe.ninja profile/URL |
 | `get_passive_tree` | server → AI | Allocated passive nodes, resolved to names/stats where possible, + jewel data |
 | `get_defenses` | server → AI | Gear-only life/ES/armour/evasion/resistances/block/attributes |
 | `get_offense_stats` | server → AI | Gear-only weapon damage/crit/speed stats (not a DPS number) |
 | `compare_item` | server → AI | Diff a pasted item against what's currently equipped in that slot |
+| `find_trade_upgrades` | server → AI | Search/rank live listings against equipped gear and return the official trade URL |
 | `get_recent_events` | server → AI | Recent parsed log events (area/level/death/trade/chat); raw diagnostics are opt-in |
 | `get_current_area` | server → AI | Last area entered, per the log |
 | `get_session_summary` | server → AI | Areas visited / deaths / level-ups this session |
@@ -211,6 +223,48 @@ process name, `Settings.xml`'s custom build-path attribute) weren't confirmable 
 install — if `is_pob_running`/`list_recent_pob_builds` don't find your install, adjust the
 candidate lists in `src/adapters/pob.ts`/`src/config.ts` the same way you'd adjust a
 `client-log.ts` regex that's gone stale.
+
+Imported builds are stored with a provenance envelope instead of as an
+unlabeled snapshot. `get_active_build_status` shows whether selection was
+explicitly pinned or automatic, the known character/league identity, refresh
+age, and a redacted source filename. File-backed builds refresh when their
+mtime changes; poe.ninja-backed builds refresh after five minutes or on
+`refresh_active_build`. Pasted share-code/XML builds cannot be re-fetched and
+must be imported again. `clear_active_build` removes only this local selection.
+
+## Trade upgrade searches
+
+`find_trade_upgrades` translates a build-aware request into a live PoE2 trade
+search. For example, “a helmet that improves cold resistance and maximum life,
+costs at most 1 exalted, and requires level 40 or lower” maps to:
+
+```json
+{
+  "slot": "Helm",
+  "priorities": ["cold_resistance", "maximum_life"],
+  "maxPrice": 1,
+  "currency": "exalted",
+  "maxRequiredLevel": 40
+}
+```
+
+The tool reads the equipped helmet, raises each trade filter to at least one
+point above that item's contribution, requests online listings, compares up to
+10 fetched candidates, and returns `searchUrl` for the official trade page.
+Pass `league` explicitly when the active character/build has no verified
+league identity. Listings can disappear or change price at any time.
+Candidate mods include stats granted by socketed Runes/Soul Cores/Talismans
+(PoE2's trade API represents these as nested `socketedItems`, not a flat mod
+list on the parent item). `slot: "Offhand"` spans four distinct trade
+categories (Shield, Buckler, Focus, Quiver); the tool infers the right one
+from the currently equipped item's base type and reports the resolved
+`category` in `appliedFilters`, falling back to Shield with an explicit
+warning when nothing is equipped or its type can't be determined.
+
+This uses endpoints hosted by GGG's official trade site, but those endpoints
+are not documented in GGG's published developer API. The adapter therefore
+uses short timeouts, bounded responses, at most 10 detail results, reports rate
+limit headers, and labels the source `undocumented_official_site_endpoint`.
 
 ## A note on `get_defenses`/`get_offense_stats`/`compare_item`
 

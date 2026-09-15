@@ -37,6 +37,11 @@ interface RawItem {
   fracturedMods?: string[];
   properties?: RawItemProperty[];
   additionalProperties?: RawItemProperty[];
+  // PoE2 gear sockets hold Runes/Soul Cores/Talismans, not gems; each
+  // socketed item carries its own mods rather than the parent exposing a
+  // flat "runeMods" array, so their stats must be folded in explicitly or
+  // they silently vanish from every defense/offense/trade calculation.
+  socketedItems?: RawItem[];
 }
 
 interface RawPassives {
@@ -108,6 +113,13 @@ function toItemProperties(item: RawItem): ItemProperty[] {
   }));
 }
 
+function socketedItemMods(item: RawItem): string[] {
+  return (item.socketedItems ?? []).flatMap((socketed) => [
+    ...(socketed.implicitMods ?? []),
+    ...(socketed.explicitMods ?? []),
+  ]);
+}
+
 function toInventoryItem(item: RawItem): InventoryItem {
   return {
     slot: normalizeEquipmentSlot(item.inventoryId),
@@ -122,6 +134,11 @@ function toInventoryItem(item: RawItem): InventoryItem {
       ...(item.craftedMods ?? []),
       ...(item.fracturedMods ?? []),
     ],
+    // Kept out of `mods` -- unlike this item's own affixes, a socketed
+    // Rune/Soul Core's stats are never already baked into the displayed
+    // Armour/Evasion/ES property above, so defense aggregation must always
+    // treat them as a global bonus (see computeDefenses).
+    socketedMods: socketedItemMods(item),
     properties: toItemProperties(item),
     corrupted: item.corrupted ?? null,
   };

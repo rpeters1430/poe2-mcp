@@ -24,7 +24,7 @@ Recommendation: complete the P0 items before adding more data sources. Then fix 
 
 - `npm ci`: passed.
 - `npm run build`: passed with TypeScript strict mode.
-- Tests: the original 37 passed; milestone one expands the suite to 50 passing tests using `node --import tsx --test src/adapters/*.test.ts src/build/*.test.ts`.
+- Tests: the original 37 passed; milestone one expanded the suite to 53 after review follow-ups, and milestone two now has 70 passing tests through the portable `npm test` command.
 - `npm audit --json`: 0 known vulnerabilities across the installed dependency graph.
 - `npm pack --dry-run`: milestone one builds a 124.7 kB tarball containing 96 files, including all source/tests/maps and both generated `dist` files; package trimming remains a P2 item.
 - GitHub baseline: no project-owned `.github/workflows` files. Milestone one adds `.github/workflows/ci.yml`; branch protection remains a repository-setting follow-up.
@@ -46,6 +46,10 @@ This document was reconciled from all three reviews formerly in the repository. 
 | Prevent chat/whispers from spoofing system events; hide raw events by default | Implemented in milestone-one PR |
 | Normalize PoB/GGG slots and exclude swap/flask/charm slots from active totals | Implemented in milestone-one PR |
 | Add build/test/audit/package CI on Node 20/22/24 | Implemented in milestone-one PR |
+| Add active-build identity, provenance, mtime/TTL refresh, status/refresh/clear | Implemented in milestone-two PR |
+| Correct poe.ninja source attribution and surface active-build age in derived results | Implemented in milestone-two PR |
+| Stop reapplying local Armour/Evasion/ES modifiers to displayed item properties | Implemented in milestone-two PR; broader real-item fixtures remain |
+| Add build-aware PoE2 trade search with budget/level filters, ranking, and official URL | Implemented in milestone-two PR; endpoint is explicitly marked undocumented |
 
 ## Priority definitions
 
@@ -124,7 +128,7 @@ remaining acceptance criteria continue to describe the intended regression bound
 
 #### 6. Active PoB data becomes permanently stale
 
-**Evidence:** [`src/adapters/active-build.ts`](./src/adapters/active-build.ts) lines 43–58 returns `active-build.json` before checking whether the source PoB file changed. The first auto-loaded local/ninja build is persisted and thereafter always wins. There is no clear, refresh, or status tool.
+**Historical baseline evidence:** The original active-build adapter returned `active-build.json` before checking its source and exposed no clear, refresh, or status tool. Milestone two stores provenance, refreshes file-backed records by mtime and poe.ninja records on a five-minute TTL, and adds all three controls.
 
 **Impact:** Gear and analysis can remain stale across saves, character switches, leagues, and game sessions indefinitely.
 
@@ -144,7 +148,7 @@ remaining acceptance criteria continue to describe the intended regression bound
 
 #### 8. Gear defense totals likely double-count local defensive modifiers
 
-**Evidence:** [`src/build/defenses.ts`](./src/build/defenses.ts) sums displayed Armour/Evasion/ES properties, then reapplies every `increased Armour/Evasion/Energy Shield` item mod to those totals (lines 39–72). Displayed item properties normally already reflect local modifiers.
+**Historical baseline evidence:** Defense aggregation reapplied local Armour/Evasion/ES affixes to already-modified displayed properties. Milestone two now trusts displayed item values and only adds flat ES from items with no displayed ES property; more real PoE2 fixtures are still required.
 
 **Impact:** Armour, evasion, and energy shield can be materially overstated; item comparisons inherit the same error.
 
@@ -194,7 +198,7 @@ remaining acceptance criteria continue to describe the intended regression bound
 
 #### 13. poe.ninja imports are mislabeled as `pob_import`
 
-**Evidence:** `fetchNinjaAsPobBuild()` returns `parsePobXml()`, whose source is always `pob_import`. Conversion functions use `(build.source as any) ?? "pob_import"`, so they can never recover `poe_ninja`. See [`src/adapters/poe-ninja.ts`](./src/adapters/poe-ninja.ts), [`src/build/pob-parser.ts`](./src/build/pob-parser.ts), and [`src/adapters/active-build.ts`](./src/adapters/active-build.ts).
+**Historical baseline evidence:** poe.ninja imports inherited `pob_import` from the XML parser and conversion helpers hid the mismatch with `as any`. Milestone two assigns `poe_ninja` at the adapter boundary and carries it through the typed provenance envelope without casts.
 
 **Impact:** Provenance, freshness expectations, and troubleshooting are wrong. The `as any` casts hide the type-model mismatch.
 
@@ -323,13 +327,13 @@ Full pretty-printed builds, duplicated passive hashes/resolutions, and an arbitr
 | Rank | Priority | Feature | Value | Key dependency |
 |---:|:---:|---|---|---|
 | 1 | P1 | `doctor` / `get_server_status` | One call shows server version, Node/platform, enabled sources, auth expiry, log/build paths (redacted), freshness, upstream reachability, and disabled capabilities. | Security-safe diagnostics and typed outputs. |
-| 2 | P1 | Explicit source and freshness controls | Add `get_active_build_status`, `refresh_active_build`, `clear_active_build`, pin/unpin, source preference, and maximum-age settings. | Fix findings 5–7 and 13. |
+| 2 | P1 | Explicit source and freshness controls | Status/refresh/clear, provenance, mtime refresh, and remote TTL implemented; pin/unpin and configurable source preference/maximum age remain. | Fix findings 5–7 and 13. |
 | 3 | P1 | Automatic PoB build watcher | Watch the selected XML safely, debounce saves, atomically reparse, retain last-known-good data, and emit a resource update. | Safe path policy and freshness metadata. |
 | 4 | P1 | Build confidence/quality report | Every analysis reports source age, identity match, recognized mod ratio, unresolved passive count, missing skill data, and whether numbers are gear-only or PoB-computed. | Unified source model. |
 | 5 | P2 | Unified `get_build_summary` | A compact model-friendly snapshot of identity, level/class, main skills, defenses, offense, key passives, and data limitations reduces tool round trips and contradictory source selection. | Typed outputs and unified resolver. |
 | 6 | P2 | Full build-to-build comparison | Compare current vs saved/URL build, including equipment, gems, passives, PoB stats, gains/losses, and confidence—not only one item. | Stable PoB parsing and identity metadata. |
 | 7 | P2 | Passive-tree recommendations | Use the existing GGG tree graph to show nearby notables/keystones, shortest paths, point cost, and raw stat changes, clearly separated from calculated DPS claims. | Cache the full graph and add stat normalization. |
-| 8 | P2 | Safe price/economy lookup | Price candidate items/currencies using explicitly supported public/official sources, with league selection, cache age, sample size, and rate-limit compliance. | Central HTTP policy; verify source terms/API stability before implementation. |
+| 8 | P2 | Safe price/economy lookup | Initial build-aware live item search implemented with league/budget/required-level filters, bounded ranking, rate-limit reporting, and official URL; currency exchange/history and a documented stable API remain. | Central HTTP policy; monitor the undocumented endpoint. |
 | 9 | P2 | MCP resources and subscriptions | Expose stable resources such as active character/build and recent recognized events; notify clients when watched build/log state changes instead of requiring repeated polling. | MCP integration tests and privacy defaults. |
 | 10 | P2 | Session analytics | Area time, deaths by area, level-up timeline, trade counts, and session export using recognized events only. | Correct partial-line/rotation handling. |
 | 11 | P2 | Configuration CLI | `poe2-mcp init`, `doctor`, `auth status`, `config get/set/unset`, secure path picker, and client-config generation for Codex/Claude/Gemini. | Atomic validated state store. |
@@ -355,10 +359,10 @@ Full pretty-printed builds, duplicated passive hashes/resolutions, and an arbitr
 
 ### Milestone 2 — make returned data trustworthy
 
-1. Introduce a single source/identity/freshness envelope.
-2. Fix wrong-character fallback, default inventory resolution, stale active builds, and poe.ninja provenance.
-3. Correct defense calculations against real fixtures.
-4. Make fallback attempts/errors explicit.
+1. Introduce a single source/identity/freshness envelope. **Implemented for active builds.**
+2. Fix wrong-character fallback, default inventory resolution, stale active builds, and poe.ninja provenance. **Implemented.**
+3. Correct defense calculations against real fixtures. **Double-counting fixed; broader live fixtures remain.**
+4. Make fallback attempts/errors explicit. **Active-build context is now included; a unified resolver trace remains.**
 
 ### Milestone 3 — harden operation and distribution
 

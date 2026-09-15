@@ -48,6 +48,16 @@ export interface InventoryItem {
   identified: boolean | null;
   /** Raw explicit/implicit mod strings, unparsed. */
   mods: string[];
+  /**
+   * Raw mod strings granted by socketed Runes/Soul Cores/Talismans (PoE2's
+   * only socket type), kept separate from `mods` because -- unlike the
+   * item's own affixes -- these are never already reflected in a displayed
+   * Armour/Evasion/Energy Shield property, so defense aggregation must
+   * always treat them as a global bonus rather than risk double-counting
+   * them as local. Omitted (not empty array) when the source has no
+   * socket data to offer.
+   */
+  socketedMods?: string[];
   /** Base numeric properties (Armour, damage ranges, crit, APS, ...), unparsed beyond GGG's own shape. */
   properties: ItemProperty[];
   corrupted: boolean | null;
@@ -249,7 +259,7 @@ export interface PobPassiveSpec {
 }
 
 export interface PobBuildSnapshot {
-  source: "pob_import";
+  source: "pob_import" | "poe_ninja";
   importedAt: string;
   className: string | null;
   ascendClassName: string | null;
@@ -260,6 +270,100 @@ export interface PobBuildSnapshot {
   passiveTree: PobPassiveSpec;
   /** PoB's own computed stats as of whenever the build was last calculated -- see the type doc above. */
   playerStats: PobPlayerStat[];
+  note: string;
+}
+
+export type ActiveBuildOrigin =
+  | "explicit_code"
+  | "explicit_file"
+  | "poe_ninja"
+  | "auto_pob_file"
+  | "auto_poe_ninja"
+  | "legacy";
+
+export interface ActiveBuildIdentity {
+  accountName: string | null;
+  characterName: string | null;
+  /** Display label (e.g. "Rise of the Abyssal"), for identity/reporting only. */
+  league: string | null;
+  /** poe.ninja's URL slug for the league (e.g. "roa"), used to refresh the build -- can differ from `league`. */
+  leagueUrl: string | null;
+}
+
+export interface ActiveBuildRecord {
+  version: 1;
+  build: PobBuildSnapshot;
+  origin: ActiveBuildOrigin;
+  pinned: boolean;
+  savedAt: string;
+  refreshedAt: string;
+  sourcePath: string | null;
+  sourceModifiedAt: string | null;
+  sourceUpdatedAt: string | null;
+  identity: ActiveBuildIdentity;
+}
+
+export interface ActiveBuildStatus {
+  available: boolean;
+  origin: ActiveBuildOrigin | null;
+  pinned: boolean | null;
+  savedAt: string | null;
+  refreshedAt: string | null;
+  ageMs: number | null;
+  stale: boolean | null;
+  refreshable: boolean;
+  sourceFile: string | null;
+  sourceModifiedAt: string | null;
+  sourceUpdatedAt: string | null;
+  identity: ActiveBuildIdentity | null;
+  buildSummary: {
+    className: string | null;
+    ascendClassName: string | null;
+    level: number | null;
+    equipmentCount: number;
+  } | null;
+}
+
+export type TradePriority =
+  | "maximum_life"
+  | "fire_resistance"
+  | "cold_resistance"
+  | "lightning_resistance"
+  | "chaos_resistance";
+
+export interface TradeCandidate {
+  id: string | null;
+  name: string;
+  baseType: string;
+  itemLevel: number | null;
+  price: { amount: number | null; currency: string | null } | null;
+  /** Only the requested priorities are present -- not every TradePriority key. */
+  priorityDeltas: Partial<Record<TradePriority, number>>;
+  improvesAllPriorities: boolean;
+  mods: string[];
+  score: number;
+}
+
+export interface TradeUpgradeResult {
+  source: "poe_trade_site";
+  fetchedAt: string;
+  apiStatus: "undocumented_official_site_endpoint";
+  league: string;
+  searchUrl: string;
+  totalMatches: number;
+  currentItem: { name: string; slot: string | null; priorityValues: Partial<Record<TradePriority, number>> } | null;
+  appliedFilters: {
+    slot: string;
+    category: string;
+    priorities: TradePriority[];
+    minimumCandidateValues: Partial<Record<TradePriority, number>>;
+    maxPrice: { amount: number; currency: string };
+    maxRequiredLevel: number | null;
+    onlineOnly: boolean;
+  };
+  candidates: TradeCandidate[];
+  warning: string | null;
+  rateLimit: Record<string, string>;
   note: string;
 }
 
