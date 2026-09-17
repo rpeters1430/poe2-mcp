@@ -68,8 +68,63 @@ export async function handleApi(
     }
 
     if (pathname === "/api/character-state" && method === "GET") {
-      const name = await handlers.resolveCharacterName(characterName, log);
+      let name = characterName;
+      if (!name) {
+        try {
+          name = await handlers.resolveCharacterName(undefined, log);
+        } catch {}
+      }
       sendJson(res, 200, await handlers.getCharacterState(name));
+      return true;
+    }
+
+    if (pathname === "/api/character/refresh" && method === "POST") {
+      let refreshResult = null;
+      try {
+        refreshResult = await handlers.refreshActiveBuildHandler();
+      } catch {}
+      let name = characterName;
+      if (!name) {
+        try {
+          name = await handlers.resolveCharacterName(undefined, log);
+        } catch {}
+      }
+      const charState = await handlers.getCharacterState(name);
+      const defenses = await handlers.getDefenses(name, log);
+      sendJson(res, 200, {
+        refreshed: true,
+        buildRefresh: refreshResult,
+        character: charState,
+        defenses,
+      });
+      return true;
+    }
+
+    if (pathname === "/api/active-build/pob" && method === "POST") {
+      const body = await readJsonBody(req);
+      const code = String(body.code ?? body.pobCodeOrXml ?? "");
+      const filePath = typeof body.filePath === "string" ? body.filePath : undefined;
+      if (!code && !filePath) throw new Error("PoB share code, XML, or filePath is required");
+      const result = await handlers.importPobBuildHandler(filePath ?? code, Boolean(filePath));
+      sendJson(res, 200, result);
+      return true;
+    }
+
+    if (pathname === "/api/active-build/poe-ninja" && method === "POST") {
+      const body = await readJsonBody(req);
+      const result = await handlers.importPoeNinjaCharacterHandler({
+        profileUrl: typeof body.profileUrl === "string" ? body.profileUrl : undefined,
+        accountName: typeof body.accountName === "string" ? body.accountName : undefined,
+        characterName: typeof body.characterName === "string" ? body.characterName : undefined,
+        league: typeof body.league === "string" ? body.league : undefined,
+      });
+      sendJson(res, 200, result);
+      return true;
+    }
+
+    if (pathname === "/api/active-build/refresh" && method === "POST") {
+      const result = await handlers.refreshActiveBuildHandler();
+      sendJson(res, 200, result);
       return true;
     }
 

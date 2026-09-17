@@ -276,6 +276,26 @@ The AI CLI automatically:
 4. Summarizes preview candidate listings with prices directly in your chat.
 5. Operates 100% without needing any GGG Developer Client ID or OAuth credentials.
 
+---
+
+### Web Dashboard & Active Build Management
+
+Open `http://localhost:8787/` (or `http://<desktop-lan-ip>:8787/` from your laptop) in any browser:
+
+1. **Active Build & Sync Panel:**
+   * **poe.ninja Import:** Enter your PoE account name (e.g. `rpeters1428-1042`), character name, or paste a direct `https://poe.ninja/poe2/profile/...` URL.
+   * **PoB Import:** Paste any PoB2 share code (`pobb.in/...` or base64 code) or raw build XML.
+   * **Instant AI Synchronization:** Updating your build in the dashboard immediately updates `active-build.json`, so Claude Code, Antigravity, and all MCP AI CLI tools instantly see your new gear, passive tree, and defenses without restarting anything.
+   * **1-Click Upstream Refresh:** Click **↻ Sync / Refresh Build** or **↻ Refresh Character** to re-fetch the latest poe.ninja or local PoB data.
+2. **Session Progress & Death Tracking:**
+   * Automatically tails PoE 2's `Client.txt` using PoE 2 engine patterns (`[LOADING SCREEN]`, scene source changes, and death logs).
+   * Reads recent session history upon startup so current zone, areas visited, and deaths are immediately accurate without needing to restart the game.
+   * Live WebSocket push delivers deaths and area transitions to the browser dashboard in real time.
+3. **In-Game Gear Comparison:**
+   * Instant side-by-side visual card diff whenever you press <kbd>Ctrl+C</kbd> in-game.
+
+---
+
 ### A note on exposure
 
 This server holds your GGG OAuth tokens and can trigger desktop

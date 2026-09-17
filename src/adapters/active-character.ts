@@ -1,9 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
-import { configDir } from "../config.js";
+import { configDir, resolveAccountName } from "../config.js";
 import type { ActiveCharacterState } from "../types.js";
 import { listCharacterNames } from "./ggg-api.js";
 import type { ClientLogTailer } from "./client-log.js";
+import { loadActiveBuildRecord } from "./active-build.js";
+import { fetchNinjaCharacters } from "./poe-ninja.js";
 
 /**
  * Which character other tools (get_passive_tree, get_defenses,
@@ -63,10 +65,37 @@ export async function getActiveCharacter(log: ClientLogTailer): Promise<ActiveCh
     return { name: stored.name, source: "explicit", setAt: stored.setAt };
   }
 
+  // Fall back to active build record if available
+  const activeBuild = loadActiveBuildRecord();
+  if (activeBuild?.identity.characterName) {
+    return {
+      name: activeBuild.identity.characterName,
+      source: "active_build",
+      setAt: activeBuild.refreshedAt,
+      message: `Using active character "${activeBuild.identity.characterName}" from ${activeBuild.origin} build.`,
+    };
+  }
+
   let knownNames: string[];
   try {
     knownNames = await listCharacterNames();
   } catch (err) {
+    const account = resolveAccountName();
+    if (account) {
+      try {
+        const ninjaChars = await fetchNinjaCharacters(account);
+        const current = ninjaChars.find((c) => c.isCurrent) ?? ninjaChars[0];
+        if (current) {
+          return {
+            name: current.name,
+            source: "inferred_from_poe_ninja",
+            setAt: current.updated,
+            message: `Inferred active character "${current.name}" (${current.league}) from poe.ninja.`,
+          };
+        }
+      } catch {}
+    }
+
     return {
       name: null,
       source: "none",

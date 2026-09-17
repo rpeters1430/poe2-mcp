@@ -6,6 +6,7 @@
 // this file doesn't change any of that, it only relocates the existing
 // per-tool bodies out of register.ts's inline callbacks.
 
+import fs from "node:fs";
 import type { ClientLogTailer } from "../adapters/client-log.js";
 import {
   fetchCharacterState,
@@ -21,15 +22,20 @@ import { computeDefenses } from "../build/defenses.js";
 import { computeOffenseStats } from "../build/offense.js";
 import { parseItemText } from "../build/item-text.js";
 import { compareItem as compareItemCore } from "../build/compare.js";
-import { resolveAccountName } from "../config.js";
-import { fetchNinjaCharacters, fetchNinjaAsPobBuild } from "../adapters/poe-ninja.js";
+import { resolveAccountName, resolvePobBuildsDir } from "../config.js";
+import { fetchNinjaCharacters, fetchNinjaAsPobBuild, parseNinjaProfileUrl } from "../adapters/poe-ninja.js";
 import {
   resolveActiveBuildRecord,
   getActiveBuildStatus as fetchActiveBuildStatus,
   pobBuildToInventorySnapshot,
   pobBuildToPassiveTree,
   pobBuildToCharacterState,
+  saveActiveBuild,
+  refreshActiveBuild,
 } from "../adapters/active-build.js";
+import { parsePobXml } from "../build/pob-parser.js";
+import { resolvePobXml } from "../build/pob-decode.js";
+import { validatePobBuildFile, readPobBuildFile } from "../adapters/pob.js";
 import { getLatestClipboardItem } from "../adapters/clipboard-store.js";
 import { createTradeSearch } from "../adapters/trade.js";
 import type { ActiveBuildRecord, GameEventType, InventorySnapshot, TradeSearchOptions } from "../types.js";
@@ -46,12 +52,19 @@ export function activeBuildContext(record: ActiveBuildRecord) {
 }
 
 export async function resolveCharacterName(explicit: string | undefined, log: ClientLogTailer): Promise<string> {
-  if (explicit) return explicit;
+  if (explicit && explicit.trim()) return explicit.trim();
   const active = await getActiveCharacter(log);
-  if (!active.name) {
-    throw new Error(active.message ?? "No active character set. Call set_active_character or pass characterName.");
+  if (active.name) return active.name;
+
+  const build = await resolveActiveBuildRecord();
+  if (build?.identity.characterName) {
+    return build.identity.characterName;
   }
-  return active.name;
+  if (build?.build.className) {
+    return build.build.className;
+  }
+
+  throw new Error(active.message ?? "No active character set. Call set_active_character or pass characterName.");
 }
 
 export async function getCurrentCharacter(log: ClientLogTailer) {
@@ -77,23 +90,45 @@ export async function setActiveCharacter(characterName: string) {
   return pinActiveCharacter(characterName);
 }
 
-export async function getCharacterState(characterName: string) {
-  try {
-    return await fetchCharacterState(characterName);
-  } catch (err) {
-    const account = resolveAccountName();
-    if (account) {
-      try {
-        const chars = await fetchNinjaCharacters(account);
-        const found = chars.find((c) => c.name.toLowerCase() === characterName.toLowerCase());
-        if (found) {
-          const build = await fetchNinjaAsPobBuild(account, found.leagueUrl, found.name);
-          return pobBuildToCharacterState(build, found.name);
-        }
-      } catch {}
-    }
-    throw err;
+export async function getCharacterState(characterName?: string) {
+  if (characterName) {
+    try {
+      return await fetchCharacterState(characterName);
+    } catch {}
   }
+
+  // Check active build first
+  const active = await resolveActiveBuildRecord();
+  if (active) {
+    if (!characterName || active.identity.characterName?.toLowerCase() === characterName.toLowerCase()) {
+      const state = pobBuildToCharacterState(active.build, active.identity.characterName ?? characterName);
+      if (active.identity.league) state.league = active.identity.league;
+      return state;
+    }
+  }
+
+  // Check poe.ninja for account
+  const account = resolveAccountName();
+  if (account) {
+    try {
+      const chars = await fetchNinjaCharacters(account);
+      const found = characterName
+        ? chars.find((c) => c.name.toLowerCase() === characterName.toLowerCase())
+        : chars.find((c) => c.isCurrent) ?? chars[0];
+      if (found) {
+        const build = await fetchNinjaAsPobBuild(account, found.leagueUrl, found.name);
+        const state = pobBuildToCharacterState(build, found.name);
+        state.league = found.league;
+        return state;
+      }
+    } catch {}
+  }
+
+  throw new Error(
+    characterName
+      ? `Could not find character "${characterName}" via GGG API, active build, or poe.ninja.`
+      : "No active character found. Please import a build from PoB or poe.ninja, or configure an account."
+  );
 }
 
 export async function getInventory(characterName: string | undefined, log: ClientLogTailer) {
@@ -104,25 +139,29 @@ export async function getInventory(characterName: string | undefined, log: Clien
   } catch (err) {
     primaryError = err;
   }
-  if (characterName) throw primaryError;
   const active = await resolveActiveBuildRecord();
   if (active) {
-    return {
-      ...pobBuildToInventorySnapshot(active.build, active.identity.characterName ?? undefined),
-      activeBuild: activeBuildContext(active),
-    };
+    if (!characterName || active.identity.characterName?.toLowerCase() === characterName.toLowerCase()) {
+      return {
+        ...pobBuildToInventorySnapshot(active.build, active.identity.characterName ?? undefined),
+        activeBuild: activeBuildContext(active),
+      };
+    }
   }
   throw primaryError;
 }
 
 export async function getDefenses(characterName: string | undefined, log: ClientLogTailer) {
+  let primaryError: unknown;
   try {
     const name = await resolveCharacterName(characterName, log);
     return computeDefenses(await fetchInventorySnapshot(name));
   } catch (err) {
-    if (characterName) throw err;
-    const active = await resolveActiveBuildRecord();
-    if (active) {
+    primaryError = err;
+  }
+  const active = await resolveActiveBuildRecord();
+  if (active) {
+    if (!characterName || active.identity.characterName?.toLowerCase() === characterName.toLowerCase()) {
       const inventory = pobBuildToInventorySnapshot(active.build, active.identity.characterName ?? undefined);
       const computed = computeDefenses(inventory);
       return {
@@ -133,42 +172,172 @@ export async function getDefenses(characterName: string | undefined, log: Client
           "Computed from active PoB / poe.ninja build. Includes PoB's simulated stats alongside gear-only aggregations.",
       };
     }
-    throw err;
   }
+  throw primaryError;
 }
 
 export async function getOffenseStats(characterName: string | undefined, log: ClientLogTailer) {
+  let primaryError: unknown;
   try {
     const name = await resolveCharacterName(characterName, log);
     return computeOffenseStats(await fetchInventorySnapshot(name));
   } catch (err) {
-    if (characterName) throw err;
-    const active = await resolveActiveBuildRecord();
-    if (active) {
+    primaryError = err;
+  }
+  const active = await resolveActiveBuildRecord();
+  if (active) {
+    if (!characterName || active.identity.characterName?.toLowerCase() === characterName.toLowerCase()) {
       return {
         ...computeOffenseStats(pobBuildToInventorySnapshot(active.build, active.identity.characterName ?? undefined)),
         activeBuild: activeBuildContext(active),
       };
     }
-    throw err;
   }
+  throw primaryError;
 }
 
 export async function getPassiveTree(characterName: string | undefined, log: ClientLogTailer) {
+  let primaryError: unknown;
   try {
     const name = await resolveCharacterName(characterName, log);
     return await fetchPassiveTree(name);
   } catch (err) {
-    if (characterName) throw err;
-    const active = await resolveActiveBuildRecord();
-    if (active) {
+    primaryError = err;
+  }
+  const active = await resolveActiveBuildRecord();
+  if (active) {
+    if (!characterName || active.identity.characterName?.toLowerCase() === characterName.toLowerCase()) {
       return {
         ...(await pobBuildToPassiveTree(active.build, active.identity.characterName ?? undefined)),
         activeBuild: activeBuildContext(active),
       };
     }
-    throw err;
   }
+  throw primaryError;
+}
+
+export async function importPobBuildHandler(codeOrFilePath: string, isFilePath = false) {
+  let raw: string;
+  let sourceFile: string | null = null;
+  let sourceModifiedAt: string | null = null;
+  if (isFilePath) {
+    const buildsDir = resolvePobBuildsDir();
+    if (!buildsDir) {
+      throw new Error("Set POE2_POB_BUILDS_PATH before importing a local build file.");
+    }
+    sourceFile = validatePobBuildFile(codeOrFilePath, buildsDir);
+    sourceModifiedAt = fs.statSync(sourceFile).mtime.toISOString();
+    raw = readPobBuildFile(sourceFile, buildsDir);
+  } else {
+    raw = codeOrFilePath;
+  }
+  const xml = await resolvePobXml(raw);
+  const parsed = parsePobXml(xml);
+  const record = saveActiveBuild(parsed, {
+    origin: isFilePath ? "explicit_file" : "explicit_code",
+    pinned: true,
+    sourcePath: sourceFile,
+    sourceModifiedAt,
+    identity: {
+      characterName: parsed.className ? `${parsed.className}` : null,
+    },
+  });
+  return {
+    success: true,
+    record,
+    summary: {
+      className: parsed.className,
+      ascendClassName: parsed.ascendClassName,
+      level: parsed.level,
+      equipmentCount: parsed.equipment.length,
+    },
+  };
+}
+
+export async function importPoeNinjaCharacterHandler(options: {
+  profileUrl?: string;
+  accountName?: string;
+  characterName?: string;
+  league?: string;
+}) {
+  let acc = options.accountName ?? resolveAccountName();
+  let l = options.league;
+  let char = options.characterName;
+
+  if (options.profileUrl) {
+    const parsed = parseNinjaProfileUrl(options.profileUrl);
+    if (!parsed) {
+      throw new Error(
+        "Invalid poe.ninja URL format. Expected: https://poe.ninja/poe2/profile/<account>/<league>/character/<name>"
+      );
+    }
+    acc = parsed.account;
+    l = parsed.league;
+    char = parsed.character;
+  }
+
+  if (!acc) {
+    throw new Error("No account name provided. Pass accountName, a full poe.ninja profileUrl, or configure an account.");
+  }
+
+  if (!char || !l) {
+    const chars = await fetchNinjaCharacters(acc);
+    const match = char
+      ? chars.find((c) => c.name.toLowerCase() === char!.toLowerCase())
+      : chars.find((c) => c.isCurrent) ?? chars[0];
+    if (!match) {
+      throw new Error(`Could not find character "${char ?? ""}" on poe.ninja for account "${acc}".`);
+    }
+    char = match.name;
+    l = match.leagueUrl;
+  }
+
+  const build = await fetchNinjaAsPobBuild(acc, l, char);
+  let sourceUpdatedAt: string | undefined;
+  let displayLeague = l;
+  try {
+    const chars = await fetchNinjaCharacters(acc);
+    const match = chars.find((c) => c.name.toLowerCase() === char!.toLowerCase());
+    sourceUpdatedAt = match?.updated;
+    if (match?.league) displayLeague = match.league;
+  } catch {}
+
+  const record = saveActiveBuild(build, {
+    origin: "poe_ninja",
+    pinned: true,
+    sourceUpdatedAt,
+    identity: {
+      accountName: acc,
+      characterName: char,
+      league: displayLeague,
+      leagueUrl: l,
+    },
+  });
+
+  pinActiveCharacter(char);
+
+  return {
+    success: true,
+    record,
+    summary: {
+      account: acc,
+      character: char,
+      league: displayLeague,
+      className: build.className,
+      ascendClassName: build.ascendClassName,
+      level: build.level,
+      equipmentCount: build.equipment.length,
+    },
+  };
+}
+
+export async function refreshActiveBuildHandler() {
+  const record = await refreshActiveBuild();
+  return {
+    success: true,
+    record,
+    status: await fetchActiveBuildStatus(),
+  };
 }
 
 export async function getActiveBuildStatus() {
@@ -228,13 +397,15 @@ export async function compareItem(
     const name = await resolveCharacterName(characterName, log);
     inventory = await fetchInventorySnapshot(name);
   } catch (primaryError) {
-    if (characterName) throw primaryError;
     const active = await resolveActiveBuildRecord();
     if (!active) {
       throw new Error(
         "No inventory available from GGG API and no active PoB/poe.ninja build found. " +
           "Import a build using import_pob_build or configure an account with set_account_name."
       );
+    }
+    if (characterName && active.identity.characterName && active.identity.characterName.toLowerCase() !== characterName.toLowerCase()) {
+      throw primaryError;
     }
     inventory = pobBuildToInventorySnapshot(active.build, active.identity.characterName ?? undefined);
     activeBuildCtx = activeBuildContext(active);

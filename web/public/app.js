@@ -128,7 +128,16 @@ async function refreshServerStatus() {
     const sess = s.gameLog?.session;
     if (sess) {
       sessionEl.textContent = `${sess.areasVisited ?? 0} zones visited`;
-      dlEl.textContent = `💀 Deaths: ${sess.deaths ?? 0} &bull; ⬆️ Level-ups: ${sess.levelUps ?? 0}`;
+      dlEl.innerHTML = `💀 Deaths: <strong style="color:var(--bad);">${sess.deaths ?? 0}</strong> &bull; ⬆️ Level-ups: <strong style="color:var(--poe-rare);">${sess.levelUps ?? 0}</strong>`;
+    }
+
+    // Session duration tag in events panel
+    const sessionTag = document.getElementById("session-duration-tag");
+    if (sessionTag && sess?.startedAt) {
+      const elapsedMins = Math.max(0, Math.round((Date.now() - new Date(sess.startedAt).getTime()) / 60000));
+      const hours = Math.floor(elapsedMins / 60);
+      const mins = elapsedMins % 60;
+      sessionTag.textContent = `Session: ${hours > 0 ? `${hours}h ` : ""}${mins}m (${sess.deaths ?? 0} deaths)`;
     }
 
     // Latest Clipboard Item
@@ -138,6 +147,52 @@ async function refreshServerStatus() {
       clipNameEl.textContent = `${s.clipboard.name} (${s.clipboard.baseType ?? s.clipboard.itemClass ?? ""})`;
       clipNameEl.className = `hud-value hud-item-name ${getRarityClass(s.clipboard.rarity)}`;
       clipMetaEl.textContent = `Copied ${s.clipboard.secondsAgo ?? 0}s ago &bull; Click to compare`;
+    }
+
+    // Update Active Build Panel card
+    const buildNameEl = document.getElementById("build-display-name");
+    const buildMetaEl = document.getElementById("build-display-meta");
+    const buildPill = document.getElementById("build-freshness-pill");
+    const buildIcon = document.getElementById("build-origin-icon");
+    if (buildNameEl && s.activeBuild?.available) {
+      const b = s.activeBuild;
+      const bChar = b.identity?.characterName ?? b.buildSummary?.className ?? "Active Build";
+      const bClass = b.buildSummary?.ascendClassName || b.buildSummary?.className || "";
+      const bLvl = b.buildSummary?.level ? `Lv ${b.buildSummary.level} ` : "";
+      buildNameEl.textContent = `${bChar} (${bLvl}${bClass})`;
+      buildMetaEl.innerHTML = `Source: <strong>${escapeHtml(b.origin)}</strong> &bull; League: <strong>${escapeHtml(b.identity?.league ?? "Standard")}</strong> &bull; ${b.buildSummary?.equipmentCount ?? 0} items equipped`;
+      if (buildIcon) buildIcon.textContent = b.origin.includes("ninja") ? "🥷" : "📜";
+      if (buildPill) {
+        if (b.stale) {
+          buildPill.textContent = "Stale (click sync)";
+          buildPill.className = "status-pill pill-stale";
+        } else {
+          buildPill.textContent = "Synced & Ready";
+          buildPill.className = "status-pill pill-fresh";
+        }
+      }
+    } else if (buildNameEl) {
+      buildNameEl.textContent = "No Active Build Loaded";
+      buildMetaEl.textContent = "Import from poe.ninja or paste a PoB share code below";
+      if (buildIcon) buildIcon.textContent = "🛡️";
+      if (buildPill) {
+        buildPill.textContent = "No Build";
+        buildPill.className = "status-pill pill-neutral";
+      }
+    }
+
+    // Pre-fill import fields if empty
+    const ninjaAcc = document.getElementById("ninja-account-input");
+    if (ninjaAcc && !ninjaAcc.value && s.account?.accountName) {
+      ninjaAcc.value = s.account.accountName;
+    }
+    const ninjaChar = document.getElementById("ninja-char-input");
+    if (ninjaChar && !ninjaChar.value && s.activeCharacter?.name) {
+      ninjaChar.value = s.activeCharacter.name;
+    }
+    const ninjaLg = document.getElementById("ninja-league-input");
+    if (ninjaLg && !ninjaLg.value && s.activeBuild?.identity?.league) {
+      ninjaLg.value = s.activeBuild.identity.league;
     }
 
     // Server badge
@@ -159,10 +214,10 @@ async function refreshCharacter() {
     const state = await api(`/api/character-state${name ? `?characterName=${encodeURIComponent(name)}` : ""}`);
     summaryEl.innerHTML = `
       <div style="font-weight:700;font-size:15px;color:var(--poe-rare);margin-bottom:4px;">
-        ${escapeHtml(state.name)} &bull; Level ${state.level} ${escapeHtml(state.class)}
+        ${escapeHtml(state.name)} &bull; Level ${state.level} ${escapeHtml(state.characterClass ?? state.class ?? "")}
       </div>
       <div style="color:var(--text-muted);font-size:12px;">
-        League: <strong>${escapeHtml(state.league ?? "–")}</strong> &bull; Experience: ${Number(state.experience).toLocaleString()}
+        League: <strong>${escapeHtml(state.league ?? "Standard")}</strong> &bull; Experience: ${Number(state.experience ?? 0).toLocaleString()}
       </div>
     `;
 
@@ -196,7 +251,7 @@ async function refreshCharacter() {
 
 async function refreshEvents() {
   try {
-    const data = await api("/api/recent-events?limit=25");
+    const data = await api("/api/recent-events?limit=30");
     const list = document.getElementById("events-list");
     const countEl = document.getElementById("events-count");
     if (countEl) countEl.textContent = `${(data.events || []).length} events`;
@@ -213,13 +268,29 @@ async function refreshEvents() {
         if (ev.type === "death") { icon = "💀"; badgeCls = "death"; }
         if (ev.type === "level_up") { icon = "⬆️"; badgeCls = "level_up"; }
         if (ev.type === "trade_whisper") { icon = "💰"; }
+        if (ev.type === "instance_created") { icon = "🌐"; }
+
+        const d = ev.data || {};
+        const area = d.area || ev.area;
+        const char = d.character || ev.character || ev.characterName;
+        const level = d.level || ev.level;
+        const from = d.player || d.from || ev.from;
+        const message = d.message || ev.message;
 
         let detail = "";
-        if (ev.type === "area_entered") detail = `Entered <strong>${escapeHtml(ev.area)}</strong>`;
-        else if (ev.type === "death") detail = `<strong style="color:var(--bad);">Character died</strong> in ${escapeHtml(ev.area ?? "zone")}`;
-        else if (ev.type === "level_up") detail = `<strong style="color:var(--poe-rare);">${escapeHtml(ev.characterName)}</strong> reached level ${ev.level}`;
-        else if (ev.type === "trade_whisper") detail = `From <em>${escapeHtml(ev.from)}</em>: ${escapeHtml(ev.item ?? "Trade item")}`;
-        else detail = escapeHtml(ev.text ?? ev.type);
+        if (ev.type === "area_entered") {
+          detail = `Entered <strong>${escapeHtml(area || "Unknown Area")}</strong>`;
+        } else if (ev.type === "death") {
+          detail = `<strong style="color:var(--bad);">${escapeHtml(char || "Character")} was slain</strong>${area ? ` in <em>${escapeHtml(area)}</em>` : ""}`;
+        } else if (ev.type === "level_up") {
+          detail = `<strong style="color:var(--poe-rare);">${escapeHtml(char || "Character")}</strong> reached level <strong>${level || "?"}</strong>`;
+        } else if (ev.type === "trade_whisper") {
+          detail = `${d.direction || "From"} <em>${escapeHtml(from || "Player")}</em>: ${escapeHtml(message || "")}`;
+        } else if (ev.type === "instance_created") {
+          detail = `Instance created for <em>${escapeHtml(d.areaId || "Area")}</em> (Lv ${d.areaLevel}, seed ${d.seed})`;
+        } else {
+          detail = escapeHtml(ev.text ?? d.message ?? ev.type);
+        }
 
         return `<li class="event-item ${badgeCls}">
           <div>
@@ -625,6 +696,67 @@ function connectWs() {
       } else if (msg.type === "advisory") {
         const act = msg.action;
         showToast(act?.reason ? `Advisory: ${act.reason}` : "AI Advisory", act?.message ?? "", act?.urgency ?? "info", act?.ttlMs ?? 6000);
+      } else if (msg.type === "log_event") {
+        const ev = msg.event;
+        if (!ev) return;
+        const list = document.getElementById("events-list");
+        if (list) {
+          const time = new Date(ev.timestamp).toLocaleTimeString();
+          let badgeCls = "";
+          let icon = "💬";
+          if (ev.type === "area_entered") { icon = "🗺️"; }
+          if (ev.type === "death") { icon = "💀"; badgeCls = "death"; }
+          if (ev.type === "level_up") { icon = "⬆️"; badgeCls = "level_up"; }
+          if (ev.type === "trade_whisper") { icon = "💰"; }
+          if (ev.type === "instance_created") { icon = "🌐"; }
+
+          const d = ev.data || {};
+          const area = d.area || ev.area;
+          const char = d.character || ev.character || ev.characterName;
+          const level = d.level || ev.level;
+          const from = d.player || d.from || ev.from;
+          const message = d.message || ev.message;
+
+          let detail = "";
+          if (ev.type === "area_entered") {
+            detail = `Entered <strong>${escapeHtml(area || "Unknown Area")}</strong>`;
+          } else if (ev.type === "death") {
+            detail = `<strong style="color:var(--bad);">${escapeHtml(char || "Character")} was slain</strong>${area ? ` in <em>${escapeHtml(area)}</em>` : ""}`;
+          } else if (ev.type === "level_up") {
+            detail = `<strong style="color:var(--poe-rare);">${escapeHtml(char || "Character")}</strong> reached level <strong>${level || "?"}</strong>`;
+          } else if (ev.type === "trade_whisper") {
+            detail = `${d.direction || "From"} <em>${escapeHtml(from || "Player")}</em>: ${escapeHtml(message || "")}`;
+          } else if (ev.type === "instance_created") {
+            detail = `Instance created for <em>${escapeHtml(d.areaId || "Area")}</em> (Lv ${d.areaLevel}, seed ${d.seed})`;
+          } else {
+            detail = escapeHtml(ev.text ?? d.message ?? ev.type);
+          }
+
+          const li = document.createElement("li");
+          li.className = `event-item ${badgeCls}`;
+          li.innerHTML = `<div><span class="event-type-tag">${icon} ${ev.type.replace(/_/g, " ")}</span><span>${detail}</span></div><span class="event-time">${time}</span>`;
+          if (list.firstChild && list.firstChild.textContent?.includes("No recent events")) {
+            list.innerHTML = "";
+          }
+          list.insertBefore(li, list.firstChild);
+          while (list.children.length > 30) list.removeChild(list.lastChild);
+        }
+
+        if (ev.type === "death") {
+          const char = ev.data?.character || "Character";
+          const area = ev.data?.area;
+          showToast("💀 Character Slain", `${char} died${area ? ` in ${area}` : ""}`, "critical", 6000);
+          refreshServerStatus();
+        } else if (ev.type === "area_entered") {
+          const area = ev.data?.area || "New Area";
+          showToast("🗺️ Area Entered", area, "info", 2500);
+          refreshServerStatus();
+        } else if (ev.type === "level_up") {
+          const char = ev.data?.character || "Character";
+          showToast("⬆️ Level Up!", `${char} reached level ${ev.data?.level ?? ""}`, "info", 5000);
+          refreshCharacter();
+          refreshServerStatus();
+        }
       }
     } catch {}
   };
@@ -632,9 +764,22 @@ function connectWs() {
 
 // ---- Event Listeners ----------------------------------------------
 
-document.getElementById("refresh-btn").addEventListener("click", () => {
-  refreshCharacter();
-  refreshServerStatus();
+document.getElementById("refresh-btn").addEventListener("click", async () => {
+  const btn = document.getElementById("refresh-btn");
+  btn.classList.add("btn-spinning");
+  btn.textContent = "Refreshing...";
+  try {
+    await api("/api/character/refresh", { method: "POST" });
+    await refreshCharacter();
+    await refreshServerStatus();
+    showToast("Refreshed", "Character loadout and stats updated", "info");
+  } catch (err) {
+    await refreshCharacter();
+    await refreshServerStatus();
+  } finally {
+    btn.classList.remove("btn-spinning");
+    btn.textContent = "↻ Refresh Character";
+  }
 });
 
 document.getElementById("set-active-btn").addEventListener("click", async () => {
@@ -644,10 +789,105 @@ document.getElementById("set-active-btn").addEventListener("click", async () => 
     await api("/api/active-character", { method: "POST", body: JSON.stringify({ characterName: name }) });
     await refreshCharacter();
     await refreshServerStatus();
+    showToast("Active Character Pinned", name, "info");
   } catch (err) {
     document.getElementById("character-summary").innerHTML = `<span class="error">${escapeHtml(err.message)}</span>`;
   }
 });
+
+// Build & Sync Tab Switching
+document.querySelectorAll(".tab-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".tab-btn").forEach((b) => b.classList.remove("active"));
+    document.querySelectorAll(".tab-content").forEach((c) => (c.style.display = "none"));
+    btn.classList.add("active");
+    const target = document.getElementById(btn.dataset.tab);
+    if (target) target.style.display = "block";
+  });
+});
+
+// Sync Active Build Button
+const syncBuildBtn = document.getElementById("sync-build-btn");
+if (syncBuildBtn) {
+  syncBuildBtn.addEventListener("click", async () => {
+    syncBuildBtn.classList.add("btn-spinning");
+    syncBuildBtn.textContent = "Syncing...";
+    try {
+      const res = await api("/api/active-build/refresh", { method: "POST" });
+      showToast("Build Synchronized", `Updated build from ${res.status?.origin ?? "upstream"}`, "info");
+      await refreshServerStatus();
+      await refreshCharacter();
+    } catch (err) {
+      showToast("Sync Error", err.message, "warning");
+    } finally {
+      syncBuildBtn.classList.remove("btn-spinning");
+      syncBuildBtn.textContent = "↻ Sync / Refresh Build";
+    }
+  });
+}
+
+// Import from poe.ninja Button
+const importNinjaBtn = document.getElementById("btn-import-ninja");
+if (importNinjaBtn) {
+  importNinjaBtn.addEventListener("click", async () => {
+    const profileUrl = document.getElementById("ninja-url-input")?.value.trim() || undefined;
+    const accountName = document.getElementById("ninja-account-input")?.value.trim() || undefined;
+    const characterName = document.getElementById("ninja-char-input")?.value.trim() || undefined;
+    const league = document.getElementById("ninja-league-input")?.value.trim() || undefined;
+
+    if (!profileUrl && !accountName) {
+      showToast("Input Required", "Enter an account name or full poe.ninja profile URL", "warning");
+      return;
+    }
+
+    importNinjaBtn.classList.add("btn-spinning");
+    importNinjaBtn.textContent = "Importing...";
+    try {
+      const res = await api("/api/active-build/poe-ninja", {
+        method: "POST",
+        body: JSON.stringify({ profileUrl, accountName, characterName, league }),
+      });
+      showToast("Build Imported!", `Active build updated: ${res.summary?.character} (Lv ${res.summary?.level} ${res.summary?.ascendClassName || res.summary?.className})`, "info");
+      await refreshServerStatus();
+      await refreshCharacter();
+    } catch (err) {
+      showToast("Import Failed", err.message, "critical");
+    } finally {
+      importNinjaBtn.classList.remove("btn-spinning");
+      importNinjaBtn.textContent = "Import & Sync from poe.ninja";
+    }
+  });
+}
+
+// Import PoB Build Button
+const importPobBtn = document.getElementById("btn-import-pob");
+if (importPobBtn) {
+  importPobBtn.addEventListener("click", async () => {
+    const code = document.getElementById("pob-code-input")?.value.trim();
+    if (!code) {
+      showToast("Input Required", "Paste a PoB share code (pobb.in/...) or XML first", "warning");
+      return;
+    }
+
+    importPobBtn.classList.add("btn-spinning");
+    importPobBtn.textContent = "Importing PoB...";
+    try {
+      const res = await api("/api/active-build/pob", {
+        method: "POST",
+        body: JSON.stringify({ code }),
+      });
+      showToast("PoB Imported!", `Active build updated: Lv ${res.summary?.level} ${res.summary?.ascendClassName || res.summary?.className}`, "info");
+      document.getElementById("pob-code-input").value = "";
+      await refreshServerStatus();
+      await refreshCharacter();
+    } catch (err) {
+      showToast("Import Failed", err.message, "critical");
+    } finally {
+      importPobBtn.classList.remove("btn-spinning");
+      importPobBtn.textContent = "Import PoB Build";
+    }
+  });
+}
 
 document.getElementById("compare-btn").addEventListener("click", compareItem);
 document.getElementById("clear-compare-btn").addEventListener("click", clearCompare);
@@ -669,7 +909,6 @@ document.getElementById("latest-drop-hud").addEventListener("click", () => {
   if (text) {
     compareItem();
   } else {
-    // Fetch latest clipboard item from server
     api("/api/clipboard-item").then((clip) => {
       if (clip.available && clip.text) {
         document.getElementById("item-text").value = clip.text;
@@ -687,8 +926,8 @@ document.getElementById("btn-create-trade-search").addEventListener("click", han
 refreshCharacter();
 refreshEvents();
 refreshServerStatus();
-setInterval(refreshEvents, 3000);
-setInterval(refreshServerStatus, 5000);
+setInterval(refreshEvents, 1500);
+setInterval(refreshServerStatus, 1500);
 connectWs();
 
 // Auto-populate latest clipboard item on first load if available

@@ -9,7 +9,7 @@ import { ClientLogTailer } from "./adapters/client-log.js";
 import { registerTools } from "./tools/register.js";
 import { SERVER_INSTRUCTIONS } from "./instructions.js";
 import { handleApi } from "./web/api.js";
-import { handleUpgrade } from "./web/ws.js";
+import { handleUpgrade, broadcastLogEvent } from "./web/ws.js";
 import { checkWebToken } from "./web/auth.js";
 
 // Network-reachable counterpart to index.ts's stdio-only entrypoint -- see
@@ -118,6 +118,7 @@ function serveStatic(req: http.IncomingMessage, res: http.ServerResponse, pathna
 
 async function main() {
   const log = new ClientLogTailer();
+  log.onEvent((event) => broadcastLogEvent(event));
   log.start();
 
   const httpServer = http.createServer((req, res) => {

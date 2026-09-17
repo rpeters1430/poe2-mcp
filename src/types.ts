@@ -221,7 +221,7 @@ export interface ItemComparison {
 
 export interface ActiveCharacterState {
   name: string | null;
-  source: "explicit" | "inferred_from_log" | "none";
+  source: "explicit" | "active_build" | "inferred_from_poe_ninja" | "inferred_from_log" | "none";
   setAt: string | null;
   message?: string;
 }

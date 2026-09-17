@@ -25,25 +25,45 @@ interface LinePattern {
 const TIMESTAMP_PREFIX = /^(\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2})/;
 
 const PATTERNS: LinePattern[] = [
+  // PoE 2 loading screen pattern (emitted on every zone change)
+  {
+    type: "area_entered",
+    regex: /^\[LOADING SCREEN\] \((.+?)\) Duration =/,
+    extract: (m) => ({ area: m[1].trim() }),
+  },
+  // PoE 2 scene source change (e.g. [SCENE] Set Source [Kingsmarch])
+  {
+    type: "area_entered",
+    regex: /^\[SCENE\] Set Source \[(?!\(null\)|\(unknown\)|Act \d+)(.+?)\]$/,
+    extract: (m) => ({ area: m[1].trim() }),
+  },
+  // PoE 1 classic pattern
   {
     type: "area_entered",
     regex: /^You have entered (.+?)\.$/,
-    extract: (m) => ({ area: m[1] }),
+    extract: (m) => ({ area: m[1].trim() }),
   },
   {
     type: "level_up",
     regex: /^(.+?) \(.+?\) is now level (\d+)$/,
-    extract: (m) => ({ character: m[1], level: Number(m[2]) }),
+    extract: (m) => ({ character: m[1].trim(), level: Number(m[2]) }),
   },
   {
     type: "level_up",
     regex: /^(.+?) has reached level (\d+)$/,
-    extract: (m) => ({ character: m[1], level: Number(m[2]) }),
+    extract: (m) => ({ character: m[1].trim(), level: Number(m[2]) }),
   },
+  // PoE 2 character death log (: <character> has been slain.)
   {
     type: "death",
     regex: /^(.+?) has been slain\.?$/,
-    extract: (m) => ({ character: m[1] }),
+    extract: (m) => ({ character: m[1].trim() }),
+  },
+  // Fallback death screen context layer (local player died)
+  {
+    type: "death",
+    regex: /ID: DeathScreen/,
+    extract: () => ({ character: "Character" }),
   },
   {
     type: "trade_whisper",
@@ -103,6 +123,7 @@ export class ClientLogTailer {
   private rawEvents: GameEvent[] = [];
   private pollHandle: NodeJS.Timeout | null = null;
   private sessionStartedAt = new Date().toISOString();
+  private listeners: ((event: GameEvent) => void)[] = [];
 
   constructor(logPathOverride?: string) {
     this.logPath = logPathOverride ?? resolveClientLogPath();
@@ -112,12 +133,24 @@ export class ClientLogTailer {
     return this.logPath;
   }
 
+  onEvent(listener: (event: GameEvent) => void): () => void {
+    this.listeners.push(listener);
+    return () => {
+      const idx = this.listeners.indexOf(listener);
+      if (idx >= 0) this.listeners.splice(idx, 1);
+    };
+  }
+
   /** Starts polling the log file for new lines. Safe to call once. */
-  start(pollIntervalMs = 1000): void {
+  start(pollIntervalMs = 500): void {
     if (this.logPath) {
-      // Start at end of file: we only care about events from now on.
       try {
-        this.offset = fs.statSync(this.logPath).size;
+        const stat = fs.statSync(this.logPath);
+        // Rather than starting at EOF and ignoring recent session events (deaths, zone entries),
+        // read the recent window (up to 1MB) so the dashboard and AI have immediate context.
+        const INITIAL_READ_BYTES = 1024 * 1024;
+        this.offset = Math.max(0, stat.size - INITIAL_READ_BYTES);
+        this.readChunk(true);
       } catch {
         this.offset = 0;
       }
@@ -139,7 +172,10 @@ export class ClientLogTailer {
       if (discovered) {
         this.logPath = discovered;
         try {
-          this.offset = fs.statSync(this.logPath).size;
+          const stat = fs.statSync(this.logPath);
+          const INITIAL_READ_BYTES = 1024 * 1024;
+          this.offset = Math.max(0, stat.size - INITIAL_READ_BYTES);
+          this.readChunk(true);
         } catch {
           this.offset = 0;
         }
@@ -148,6 +184,11 @@ export class ClientLogTailer {
       }
     }
 
+    this.readChunk(false);
+  }
+
+  private readChunk(isInitial = false): void {
+    if (!this.logPath) return;
     let stat: fs.Stats;
     try {
       stat = fs.statSync(this.logPath);
@@ -188,17 +229,59 @@ export class ClientLogTailer {
         return;
       }
 
-      const chunk = buffer.subarray(0, lastNewline + 1).toString("utf8");
+      let startIdx = 0;
+      if (isInitial && this.offset > 0) {
+        const firstNewline = buffer.indexOf(0x0a);
+        if (firstNewline !== -1 && firstNewline < lastNewline) {
+          startIdx = firstNewline + 1;
+        }
+      }
+
+      const chunk = buffer.subarray(startIdx, lastNewline + 1).toString("utf8");
       const lines = chunk.split(/\r?\n/);
       for (const line of lines) {
         if (line.trim().length === 0) continue;
         const event = parseLine(line);
-        const targetBuffer = event.type === "raw_unmatched" ? this.rawEvents : this.events;
-        targetBuffer.push(event);
-        if (targetBuffer.length > RING_BUFFER_SIZE) targetBuffer.shift();
+        if (event.type === "raw_unmatched") {
+          this.rawEvents.push(event);
+          if (this.rawEvents.length > RING_BUFFER_SIZE) this.rawEvents.shift();
+          continue;
+        }
+
+        // Deduplication & enrichment
+        if (event.type === "area_entered") {
+          const last = this.events[this.events.length - 1];
+          if (last && last.type === "area_entered" && last.data.area === event.data.area) {
+            continue;
+          }
+        } else if (event.type === "death") {
+          const last = this.events[this.events.length - 1];
+          if (last && last.type === "death") {
+            const dt = Math.abs(new Date(event.timestamp).getTime() - new Date(last.timestamp).getTime());
+            if (dt < 3000) continue;
+          }
+          if (!event.data.area) {
+            const current = this.getCurrentArea();
+            if (current.area) event.data.area = current.area;
+          }
+        }
+
+        this.events.push(event);
+        if (this.events.length > RING_BUFFER_SIZE) this.events.shift();
+
+        if (!isInitial) {
+          for (const listener of this.listeners) {
+            try {
+              listener(event);
+            } catch {}
+          }
+        }
       }
 
       this.offset += lastNewline + 1;
+      if (isInitial && this.events.length > 0) {
+        this.sessionStartedAt = this.events[0].timestamp;
+      }
     } catch {
       // Handle temporary file lock during game write
       return;

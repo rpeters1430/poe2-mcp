@@ -2,6 +2,7 @@ import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocketServer, type WebSocket } from "ws";
 import { isWebTokenValid } from "./auth.js";
+import type { GameEvent } from "../types.js";
 
 // Push channel from the desktop clipboard watcher (src/clipboard-watcher.ts,
 // via POST /api/clipboard-item) to connected browser tabs. This is a
@@ -43,6 +44,17 @@ export function broadcastAdvisory(action: unknown): void {
   const payload = JSON.stringify({
     type: "advisory",
     action,
+    dispatchedAt: new Date().toISOString(),
+  });
+  for (const client of clients) {
+    if (client.readyState === client.OPEN) client.send(payload);
+  }
+}
+
+export function broadcastLogEvent(event: GameEvent): void {
+  const payload = JSON.stringify({
+    type: "log_event",
+    event,
     dispatchedAt: new Date().toISOString(),
   });
   for (const client of clients) {

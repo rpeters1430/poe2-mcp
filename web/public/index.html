@@ -158,11 +158,82 @@
       </div>
     </section>
 
+    <!-- Active Build & Sync Panel -->
+    <section class="panel" id="panel-build">
+      <div class="panel-header">
+        <div class="panel-title-group">
+          <h2>⚡ Active Build & Sync</h2>
+          <span class="panel-tag" id="build-sync-tag">AI CLI Unified</span>
+        </div>
+        <div class="panel-actions">
+          <button id="sync-build-btn" class="btn btn-primary btn-sm">↻ Sync / Refresh Build</button>
+        </div>
+      </div>
+
+      <div class="build-status-card" id="build-status-card">
+        <div class="build-status-header">
+          <div class="build-status-title">
+            <span class="build-origin-icon" id="build-origin-icon">🛡️</span>
+            <div>
+              <div class="build-name" id="build-display-name">Loading active build...</div>
+              <div class="build-meta" id="build-display-meta">Checking build source and freshness...</div>
+            </div>
+          </div>
+          <span class="status-pill pill-neutral" id="build-freshness-pill">Checking...</span>
+        </div>
+      </div>
+
+      <div class="build-import-tabs">
+        <div class="tab-buttons">
+          <button class="tab-btn active" id="tab-btn-ninja" data-tab="tab-ninja">poe.ninja Import</button>
+          <button class="tab-btn" id="tab-btn-pob" data-tab="tab-pob">Path of Building (PoB) Import</button>
+        </div>
+
+        <!-- Tab 1: poe.ninja -->
+        <div class="tab-content active" id="tab-ninja">
+          <p class="hint">Import a public character profile from poe.ninja without requiring GGG OAuth. Updates gear, passive tree, and stats for the AI CLI.</p>
+          <div class="form-row">
+            <div class="form-group" style="flex:2;">
+              <label for="ninja-account-input">PoE Account Name</label>
+              <input id="ninja-account-input" type="text" placeholder="e.g. rpeters1428-1042" />
+            </div>
+            <div class="form-group" style="flex:2;">
+              <label for="ninja-char-input">Character Name</label>
+              <input id="ninja-char-input" type="text" placeholder="e.g. crossbowlol" />
+            </div>
+            <div class="form-group" style="flex:1.5;">
+              <label for="ninja-league-input">League (optional)</label>
+              <input id="ninja-league-input" type="text" placeholder="e.g. Forbidden Rites" />
+            </div>
+          </div>
+          <div class="form-group" style="margin-top:8px;">
+            <label for="ninja-url-input">OR Direct poe.ninja Profile URL</label>
+            <input id="ninja-url-input" type="text" placeholder="https://poe.ninja/poe2/profile/account/league/character/name" />
+          </div>
+          <div class="build-actions" style="margin-top:12px;">
+            <button id="btn-import-ninja" class="btn btn-primary">Import & Sync from poe.ninja</button>
+          </div>
+        </div>
+
+        <!-- Tab 2: PoB Import -->
+        <div class="tab-content" id="tab-pob" style="display:none;">
+          <p class="hint">Paste a PoB2 share code (pobb.in URL or base64 code) or raw XML exported from Path of Building 2.</p>
+          <div class="form-group">
+            <label for="pob-code-input">Share Code, pobb.in URL, or XML</label>
+            <textarea id="pob-code-input" rows="4" placeholder="eNrt... or https://pobb.in/... or <?xml version='1.0'?>..."></textarea>
+          </div>
+          <div class="build-actions" style="margin-top:12px;">
+            <button id="btn-import-pob" class="btn btn-primary">Import PoB Build</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- Character & Defenses Panel -->
     <section class="panel" id="panel-character">
       <div class="panel-header">
         <h2>👤 Character & Loadout</h2>
-        <button id="refresh-btn" class="btn btn-secondary btn-sm">↻ Refresh</button>
+        <button id="refresh-btn" class="btn btn-secondary btn-sm" title="Refresh character and defenses">↻ Refresh Character</button>
       </div>
       <div class="row">
         <input id="character-input" type="text" placeholder="Character name (leave blank for active)" />
@@ -184,7 +255,10 @@
     <!-- Recent Events Panel -->
     <section class="panel" id="panel-events">
       <div class="panel-header">
-        <h2>📜 Recent Game Events</h2>
+        <div class="panel-title-group">
+          <h2>📜 Recent Game Events & Tailer</h2>
+          <span class="panel-tag" id="session-duration-tag">Live Session</span>
+        </div>
         <span class="panel-tag" id="events-count">0 events</span>
       </div>
       <ul id="events-list" class="events-feed"></ul>
