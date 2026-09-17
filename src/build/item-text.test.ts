@@ -24,6 +24,7 @@ test("parses name/base type for a rare item with two header lines", () => {
   assert.equal(parsed.rarity, "Rare");
   assert.equal(parsed.name, "Doom Weave");
   assert.equal(parsed.baseType, "Vaal Regalia");
+  assert.equal(parsed.itemClass, "Body Armours");
   assert.equal(parsed.itemLevel, 82);
   assert.equal(parsed.corrupted, true);
 });

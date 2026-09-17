@@ -230,6 +230,25 @@ build via `pobBuildToInventorySnapshot`/`pobBuildToPassiveTree`/
 `pobBuildToCharacterState`, so all three data sources answer the same tool
 surface rather than needing separate tools per source.
 
+## Trade Search & Upgrade Tools (No GGG Client ID Required)
+
+`src/adapters/trade.ts` interacts directly with GGG's official Path of Exile 2 trade site (`www.pathofexile.com/trade2`):
+- **`create_trade_search`**: Use when the player asks for a trade link, search, or item recommendation (e.g., "give me a trade link for boots with movement speed and life", "find a crossbow under 30 chaos", "search trade for a helmet").
+  - Requires **NO GGG Client ID**, **NO OAuth tokens**, and **NO active character**.
+  - Maps friendly stat names (`life`, `cold_res`, `fire_res`, `lightning_res`, `chaos_res`, `movement_speed`, `attack_speed`, `cast_speed`, `armour`, `evasion`, `energy_shield`, `strength`, etc.) to official GGG pseudo filter IDs.
+  - Returns both `searchUrl` (short official trade link) and `directUrl` (direct browser query link pre-loaded with filters that works even if live API is rate-limited), plus candidate listings with prices.
+  - **Always output the clickable searchUrl / directUrl in your response** so the player can open it with one click.
+- **`find_trade_upgrades`**: Use when upgrading a specific equipped slot (`slot: "Helm"`, `slot: "Boots"`, etc.) based on stats currently on the character.
+  - Also requires no GGG developer API client ID; if character OAuth is missing, it falls back to a clean zero-baseline inventory.
+
+## In-Game Item Evaluation (Ctrl+C Workflow)
+
+- When playing Path of Exile 2, the player copies items in-game with **Ctrl+C**.
+- The Windows clipboard watcher stores the item and broadcasts it to the server.
+- Call **`compare_item`** (with NO arguments) or **`get_latest_clipboard_item`** to analyze the drop against equipped gear.
+  - Dual-ring slots: automatically evaluates both Ring 1 and Ring 2, displays stat deltas, and recommends which ring to replace.
+- Use **`emit_advisory`** with `type: "tts_callout"` to speak recommendations through desktop audio so the player hears advice without alt-tabbing.
+
 ## Adding a new tool
 
 1. Add/extend the wire type in `src/types.ts` if it returns a new shape.

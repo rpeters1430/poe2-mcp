@@ -91,130 +91,190 @@ conversation, commit it, or put it in an example config.
 
 ## Wiring it into an AI CLI
 
-All three examples below assume you've already run steps 1–4 above; they
-just tell the CLI how to launch the server.
+There are two primary ways to connect an AI CLI to this server:
 
-### Claude Code
+1. **Remote over LAN / Wi-Fi (Recommended for gaming):** Run Path of Exile 2 and this server on your **gaming desktop**, and run **Claude Code (or Antigravity / Cursor / Codex)** on your **laptop**. See [Connecting from an AI CLI on your laptop](#connecting-from-an-ai-cli-on-your-laptop) below.
+2. **Local on the same machine:** Run both the game and the AI CLI locally on the gaming desktop using a standard stdio subprocess:
 
-Either run:
+### Local stdio on the same machine
 
+If you are running the AI CLI directly on your gaming PC:
+
+#### Claude Code (Local stdio)
 ```sh
 claude mcp add poe2 -- node /absolute/path/to/poe2-mcp-server/dist/index.js
 ```
+(or add `examples/claude-code-mcp.json` into `.mcp.json` or `~/.claude.json`).
 
-(then set the env vars through `claude mcp add --env` or your shell), or
-add `examples/claude-code-mcp.json`'s contents to a `.mcp.json` in your
-project or `~/.claude.json` under `mcpServers`.
-
-### Codex CLI
-
-Either run:
-
+#### Codex CLI (Local stdio)
 ```sh
 codex mcp add poe2 -- node /absolute/path/to/poe2-mcp-server/dist/index.js
 ```
+(or add `examples/codex-config.toml`'s block to `~/.codex/config.toml`).
 
-or add `examples/codex-config.toml`'s `[mcp_servers.poe2]` block to
-`~/.codex/config.toml` directly.
+#### Antigravity (Local stdio)
+Add `examples/antigravity-mcp-config.json` into `~/.gemini/config/mcp_config.json` or `.agents/mcp_config.json`, or use `/mcp`.
 
-### Antigravity
-
-Add `examples/antigravity-mcp-config.json`'s contents under `mcpServers` in
-`~/.gemini/config/mcp_config.json` (global) or `.agents/mcp_config.json`
-(per-workspace), or use the `/mcp` command inside Antigravity to add it
-interactively.
-
-In all three cases, fill in the real absolute path to `dist/index.js` and
-your actual `POE2_GGG_CLIENT_ID`/`POE2_CONTACT_EMAIL` — none of the example
-files above are usable verbatim.
+---
 
 ## Remote access: Docker, web dashboard, and clipboard-to-compare
 
-Everything above launches the server as a **local stdio subprocess** on the
-same machine as PoE2. If you'd rather run PoE2 and this server on your
-**desktop** and interact from a **laptop** over your LAN — a browser
-dashboard, and/or a remote AI CLI — use `src/serve.ts` instead of
-`src/index.ts`. It exposes the exact same MCP tool surface at `/mcp`
-(over `StreamableHTTPServerTransport` instead of stdio), plus a small REST
-API and a browser dashboard at `/`. See PROTOCOL.md's "Interaction model"
-for how this relates to the stdio-only design: the AI's MCP interaction is
-still pull-only either way, this only changes the transport and adds a
-separate human-facing dashboard alongside it.
+If you play Path of Exile 2 on your **desktop** and want to interact with your AI CLI from a **laptop** over Wi-Fi/LAN (while playing the game with 0% FPS impact), use `src/serve.ts` (or Docker).
 
-### Run it (native, no Docker)
+The server exposes:
+* **Streamable HTTP MCP endpoint** at `http://<desktop-ip>:8787/mcp`
+* **Real-time Web Companion Dashboard** at `http://<desktop-ip>:8787/`
+* **Live WebSocket link** at `ws://<desktop-ip>:8787/ws`
+* **REST API** at `http://<desktop-ip>:8787/api/*`
 
-```sh
-npm run build
-POE2_GGG_CLIENT_ID=... POE2_CONTACT_EMAIL=... npm run start:serve
-```
+### Run it (Docker on gaming desktop - Recommended)
 
-Then open `http://localhost:8787/` (or `http://<desktop-ip>:8787/` from
-another machine on your LAN) for the dashboard.
-
-### Run it as a Docker image, on the desktop with the game
-
-```sh
-docker build -t poe2-mcp-server .
-```
-
-**Before running the container**, do the one-time GGG OAuth flow *outside*
-Docker (`npm run auth` — see Setup step 3 above), on the desktop. This
-writes `tokens.json` under `~/.config/poe2-mcp-server`, which the container
-then reads via a bind mount — simpler than trying to complete GGG's
-loopback OAuth redirect against a port published from inside a container.
-
-Create a `.env` file next to `docker-compose.yml` with:
-
-```sh
-POE2_GGG_CLIENT_ID=...
-POE2_CONTACT_EMAIL=...
-POE2_WEB_TOKEN=pick-a-long-random-string   # see "A note on exposure" below
-POE2_CONFIG_DIR_HOST=C:\Users\you\.config\poe2-mcp-server
-POE2_CLIENT_LOG_DIR_HOST=C:\Program Files (x86)\Steam\steamapps\common\Path of Exile 2\logs
-POE2_POB_BUILDS_DIR_HOST=C:\Users\you\Documents\Path of Building (PoE2)\Builds
-```
-
-then:
+Double-click `start-server-docker.bat` or run:
 
 ```sh
 docker compose up -d
 ```
 
-**Important**: `src/config.ts`'s auto-detection of `Client.txt`/PoB2 paths
-is gated on the *container's* platform (`linux`), not the Windows host's —
-those Windows candidate paths never match inside a Linux container even
-though the mounted files are Windows-authored. `docker-compose.yml` already
-sets `POE2_CLIENT_LOG_PATH`/`POE2_POB_BUILDS_PATH` explicitly to the
-in-container mount points so this isn't an issue as long as the three
-`*_HOST` paths in your `.env` are correct. Windows Defender Firewall will
-likely prompt to allow inbound connections the first time the container
-listens on the published port — allow it for your local network.
+*(Pre-configured with your game paths, logs, PoB builds, and account name in `.env` and `docker-compose.yml`)*.
 
-### Clipboard → compare, automatically
-
-`src/clipboard-watcher.ts` runs **natively on the Windows desktop, never in
-Docker** — a container can't see the Windows clipboard even under Docker
-Desktop's WSL2 backend. On the desktop (same machine as PoE2):
+### Run it (Native on gaming desktop, no Docker)
 
 ```sh
-POE2_SERVE_URL=http://127.0.0.1:8787 npm run watch-clipboard
+npm run build
+npm run start:serve
 ```
 
-It polls the clipboard, and when it sees text starting with `Item Class:`
-(PoE2's Ctrl+C item-text format) it pushes it to the server, which
-broadcasts it over a websocket to any open dashboard tab — the Compare
-panel auto-fills and re-runs the comparison. Copy an item in-game and it
-just shows up; no manual paste needed. This is a browser-UI convenience
-only, not a channel to the AI (see PROTOCOL.md).
+Then open `http://localhost:8787/` (or `http://<desktop-ip>:8787/` from your laptop) for the web dashboard.
 
-### Remote AI CLI over the network
+---
 
-Once `serve.ts` is running, add it as a remote MCP server from your laptop
-instead of a local subprocess. For Claude Code, an HTTP-type server entry
-pointing at `http://<desktop-ip>:8787/mcp` (with header
-`X-POE2-Token: <your POE2_WEB_TOKEN>` if you set one); consult your CLI's
-docs for the exact remote-MCP-server syntax, since this differs from the
-stdio `claude mcp add ...` form used above.
+### Clipboard → compare, automatically (In-game workflow)
+
+`src/clipboard-watcher.ts` runs **natively on the Windows gaming desktop, never in Docker** — Docker cannot monitor host Windows clipboard events. It uses an ultra-low-overhead persistent PowerShell STA worker polling every 200ms with near-zero CPU usage (0% game stutter while playing Path of Exile 2).
+
+On your Windows desktop:
+```sh
+npm run watch-clipboard
+```
+(or simply double-click `start-watcher.bat`).
+
+When you press **Ctrl+C** on an item in Path of Exile 2:
+1. The watcher instantly detects the item text (`Item Class:...`).
+2. It pushes it to the server (`POST /api/clipboard-item`) and stores it in the active session.
+3. The item is immediately broadcast to the web dashboard (`http://localhost:8787/`) and made available to connected AI CLIs via MCP tools.
+4. When the AI CLI emits an advisory (`tts_callout`), the watcher plays the spoken advice through your desktop speakers/headphones while you play!
+
+---
+
+### Connecting from an AI CLI on your laptop
+
+When running on your desktop with Docker (`docker compose up -d` or `start-server-docker.bat`), your MCP server is accessible across your local network at:
+
+```
+http://<desktop-ip>:8787/mcp
+```
+*(Your desktop's local IP on this network is `192.168.50.163`, or via Tailscale `100.77.144.56`)*.
+
+#### Pre-flight network check (from your laptop terminal)
+Before configuring your AI CLI, make sure your laptop can reach the gaming desktop:
+```sh
+curl http://192.168.50.163:8787/api/status
+```
+If you get a JSON response with `"status": "healthy"`, you are ready to connect! If it times out, ensure port 8787 is allowed inbound in Windows Defender Firewall on the desktop.
+
+---
+
+#### 1. Claude Code CLI (on your laptop)
+
+##### Option A: Using the CLI command
+Open your terminal on your laptop and run:
+
+```sh
+# Add globally across all projects on your laptop (Recommended):
+claude mcp add --scope user --transport http poe2 http://192.168.50.163:8787/mcp
+
+# Or add to the current project only:
+claude mcp add --transport http poe2 http://192.168.50.163:8787/mcp
+```
+
+*(If you configured `POE2_WEB_TOKEN` in your desktop `.env`, pass `--header "X-POE2-Token: <your-token>"`)*.
+
+##### Option B: Using a configuration file
+You can also add it directly to `.mcp.json` in your laptop project folder, or globally in `~/.claude.json` under `"mcpServers"` (see `examples/claude-code-remote-mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "poe2": {
+      "type": "http",
+      "url": "http://192.168.50.163:8787/mcp"
+    }
+  }
+}
+```
+
+##### Verifying in Claude Code
+Start Claude Code on your laptop (`claude`) and run the slash command:
+```
+/mcp
+```
+You should see `poe2` marked as connected with all 25 tools loaded (e.g. `compare_item`, `get_latest_clipboard_item`, `create_trade_search`, `get_server_status`, `get_defenses`, etc.).
+
+---
+
+#### 2. Antigravity / Gemini CLI (on your laptop)
+In your laptop's `~/.gemini/config/mcp_config.json` (global) or `.agents/mcp_config.json` (per-project) (see `examples/antigravity-remote-mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "poe2": {
+      "url": "http://192.168.50.163:8787/mcp"
+    }
+  }
+}
+```
+Or type `/mcp` inside Antigravity and add `http://192.168.50.163:8787/mcp`.
+
+---
+
+#### 3. Cursor / Windsurf / VS Code (on your laptop)
+In your editor's MCP Settings:
+* **Server Name:** `poe2`
+* **Type:** `streamableHttp` (or `http` / `sse`)
+* **URL:** `http://192.168.50.163:8787/mcp`
+
+---
+
+### Playing the game while connected
+
+While playing Path of Exile 2:
+1. Hover over any dropped or equipped item and press **Ctrl+C**.
+2. Look at your laptop or speak to your AI CLI:
+   * *"Is the item I just copied an upgrade for my build?"*
+   * *"Compare this item to my current gear"*
+   * *"What do you think of this drop?"*
+3. The AI calls `compare_item` (with no arguments needed!) or `get_latest_clipboard_item`.
+   * For **Rings**, it automatically evaluates both Ring 1 and Ring 2, displays stat deltas for both, and recommends which ring slot to replace.
+   * For other items, it deterministically determines the slot from the PoE 2 `Item Class:` header, calculates defense and resistance deltas, and delivers feedback.
+4. If the AI calls `emit_advisory` with `type: "tts_callout"`, your desktop audio speaks the advice out loud while you continue playing!
+
+---
+
+### Asking for Trade Links & Searches (No GGG Client ID Required)
+
+You can ask your AI CLI to generate trade search links at any time—whether you have GGG OAuth configured or not:
+* *"Find me boots with 25+ movement speed, life, and cold resistance under 20 chaos"*
+* *"Give me a trade search link for a helmet with life and cold res"*
+* *"Search trade for an Expert Hunter Hood with high evasion"*
+* *"Find upgrades on trade for my gloves"*
+
+The AI CLI automatically:
+1. Calls `create_trade_search` (for requirement-based searches) or `find_trade_upgrades` (for gear-relative upgrade searches).
+2. Maps friendly stat names (`life`, `cold_res`, `movement_speed`, etc.) to official GGG trade pseudo IDs.
+3. Provides you with a clickable `searchUrl` (official short link) and `directUrl` (direct query link with all filters pre-loaded).
+4. Summarizes preview candidate listings with prices directly in your chat.
+5. Operates 100% without needing any GGG Developer Client ID or OAuth credentials.
 
 ### A note on exposure
 
@@ -237,15 +297,18 @@ past your home network/router.
 | `get_current_character` | server → AI | Which character other tools default to (explicit or log-inferred) |
 | `set_active_character` | server → AI | Pin the default character for the tools below |
 | `get_active_build_status` | server → AI | Active build source, identity, age, and refresh capability |
+| `get_server_status` | server → AI | Unified diagnostics: server uptime, active character, build status, client log tailer state, clipboard, and endpoints |
 | `refresh_active_build` | AI → server | Reload the same PoB file or poe.ninja character |
+| `get_latest_clipboard_item` | server → AI | Most recent item copied with Ctrl+C in-game (text, affixes, stats, age) |
+| `compare_item` | server → AI | Diff an item against equipped gear (supports dual-ring auto comparison & recommendation); defaults to latest Ctrl+C item if omitted |
 | `clear_active_build` | AI → server | Clear only the local active-build selection |
 | `set_account_name` | AI → server | Set PoE account name (e.g. `rpeters1428-1042`) for poe.ninja queries |
 | `import_poe_ninja_character` | server → AI | Import character build directly from poe.ninja profile/URL |
 | `get_passive_tree` | server → AI | Allocated passive nodes, resolved to names/stats where possible, + jewel data |
 | `get_defenses` | server → AI | Gear-only life/ES/armour/evasion/resistances/block/attributes |
 | `get_offense_stats` | server → AI | Gear-only weapon damage/crit/speed stats (not a DPS number) |
-| `compare_item` | server → AI | Diff a pasted item against what's currently equipped in that slot |
 | `find_trade_upgrades` | server → AI | Search/rank live listings against equipped gear and return the official trade URL |
+| `create_trade_search` | server → AI | Generate official PoE2 trade links from requirements (slot, stats, budget) without GGG API client ID |
 | `get_recent_events` | server → AI | Recent parsed log events (area/level/death/trade/chat); raw diagnostics are opt-in |
 | `get_current_area` | server → AI | Last area entered, per the log |
 | `get_session_summary` | server → AI | Areas visited / deaths / level-ups this session |
@@ -364,6 +427,39 @@ This uses endpoints hosted by GGG's official trade site, but those endpoints
 are not documented in GGG's published developer API. The adapter therefore
 uses short timeouts, bounded responses, at most 10 detail results, reports rate
 limit headers, and labels the source `undocumented_official_site_endpoint`.
+
+### Standalone trade search without GGG Client ID (`create_trade_search`)
+
+If you want to generate an official Path of Exile 2 trade search link for arbitrary item requirements—without needing a GGG Developer Client ID, OAuth tokens, or an equipped character—use the `create_trade_search` MCP tool or `POST /api/trade/search`.
+
+Example MCP call:
+```json
+{
+  "league": "Standard",
+  "slot": "Boots",
+  "stats": [
+    { "stat": "movement_speed", "min": 25 },
+    { "stat": "maximum_life", "min": 60 },
+    { "stat": "cold_resistance", "min": 30 }
+  ],
+  "maxPrice": 20,
+  "currency": "chaos",
+  "maxRequiredLevel": 65
+}
+```
+
+Example REST request:
+```sh
+curl -X POST http://localhost:8787/api/trade/search \
+  -H "Content-Type: application/json" \
+  -d '{"slot":"Helm","stats":[{"stat":"life","min":50},{"stat":"fire_res","min":30}],"maxPrice":10}'
+```
+
+What this returns:
+- **`searchUrl`**: Official short trade search link (`https://www.pathofexile.com/trade2/search/poe2/<league>/<id>`).
+- **`directUrl`**: Direct query-encoded link (`https://www.pathofexile.com/trade2/search/poe2/<league>?q=<query>`) that opens directly in your browser with all filters pre-loaded even if the live GGG search endpoint is offline or rate-limited.
+- **`candidates`**: Up to 10 live preview listings (name, base type, item level, price, mods) when the live API responds.
+- Common friendly stat shortcuts supported: `life`, `cold_res`, `fire_res`, `lightning_res`, `chaos_res`, `movement_speed`, `attack_speed`, `cast_speed`, `critical_strike_chance`, `armour`, `evasion`, `energy_shield`, `strength`, `dexterity`, `intelligence`, and all standard PoE pseudo stats.
 
 ## A note on `get_defenses`/`get_offense_stats`/`compare_item`
 

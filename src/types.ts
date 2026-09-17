@@ -188,6 +188,8 @@ export interface ParsedItemText {
   corrupted: boolean;
   properties: ItemProperty[];
   mods: string[];
+  /** PoE 2 item class, e.g. "Helmets", "Body Armours", "Foci", "Quivers", "Rings". */
+  itemClass?: string | null;
 }
 
 export interface StatDelta {
@@ -208,6 +210,13 @@ export interface ItemComparison {
   defensesBefore: DefenseStats | null;
   defensesAfter: DefenseStats | null;
   note: string;
+  /** Present when comparing a ring without an explicit slot override. */
+  ringComparisons?: {
+    ring1: ItemComparison;
+    ring2: ItemComparison;
+    recommendedSlot: "Ring" | "Ring2";
+    recommendationReason: string;
+  };
 }
 
 export interface ActiveCharacterState {
@@ -350,6 +359,7 @@ export interface TradeUpgradeResult {
   apiStatus: "undocumented_official_site_endpoint";
   league: string;
   searchUrl: string;
+  directUrl?: string;
   totalMatches: number;
   currentItem: { name: string; slot: string | null; priorityValues: Partial<Record<TradePriority, number>> } | null;
   appliedFilters: {
@@ -364,6 +374,69 @@ export interface TradeUpgradeResult {
   candidates: TradeCandidate[];
   warning: string | null;
   rateLimit: Record<string, string>;
+  note: string;
+}
+
+export interface TradeStatFilter {
+  /** Explicit GGG trade stat ID (e.g. "pseudo.pseudo_total_life"), or a friendly stat name. */
+  id?: string;
+  /** Friendly stat name (e.g. "life", "cold_resistance", "movement_speed", "chaos_resistance"). */
+  stat?: string;
+  min?: number;
+  max?: number;
+}
+
+export interface TradeSearchOptions {
+  /** League name (e.g. "Standard", "Rise of the Abyssal"). Defaults to active character league or "Standard". */
+  league?: string;
+  /** Equipment slot to search for (e.g. "Helm", "Boots", "Ring", "BodyArmour", "Weapon", "Offhand"). */
+  slot?: "Helm" | "BodyArmour" | "Gloves" | "Boots" | "Belt" | "Amulet" | "Ring" | "Ring2" | "Offhand" | "Weapon";
+  /** Explicit GGG trade category (e.g. "armour.helmet", "armour.boots", "weapon.crossbow", "accessory.ring"). */
+  category?: string;
+  /** Item name (e.g. for unique items). */
+  name?: string;
+  /** Item base type line (e.g. "Expert Hunter Hood", "Rawhide Belt"). */
+  baseType?: string;
+  /** Rarity filter ("normal", "magic", "rare", "unique", "nonunique"). */
+  rarity?: "normal" | "magic" | "rare" | "unique" | "nonunique";
+  /** Stat requirements (e.g. minimum life, resistances, attributes). */
+  stats?: TradeStatFilter[];
+  /** Maximum price budget. */
+  maxPrice?: number;
+  /** Currency code for maxPrice (default "chaos", or "exalted", "divine"). */
+  currency?: string;
+  /** Maximum required character level to equip the item. */
+  maxRequiredLevel?: number;
+  /** Whether to filter to online players only (default true). */
+  onlineOnly?: boolean;
+  /** Maximum number of candidate items to fetch and inspect (default 10). */
+  resultLimit?: number;
+}
+
+export interface TradeSearchResult {
+  source: "poe_trade_site";
+  createdAt: string;
+  league: string;
+  /** Short official search URL, e.g. https://www.pathofexile.com/trade2/search/poe2/<league>/<searchId> */
+  searchUrl: string;
+  /** Full URL with query parameters encoded, always guaranteed to open directly in the browser even without API calls. */
+  directUrl: string;
+  totalMatches: number;
+  query: Record<string, unknown>;
+  appliedFilters: {
+    slot?: string;
+    category?: string;
+    name?: string;
+    baseType?: string;
+    rarity?: string;
+    stats?: Array<{ id: string; label?: string; min?: number; max?: number }>;
+    maxPrice?: { amount: number; currency: string };
+    maxRequiredLevel?: number;
+    onlineOnly: boolean;
+  };
+  candidates: TradeCandidate[];
+  warning: string | null;
+  rateLimit?: Record<string, string>;
   note: string;
 }
 

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { InventorySnapshot } from "../types.js";
-import { findTradeUpgrades, resetTradeMetadataCacheForTests } from "./trade.js";
+import { findTradeUpgrades, createTradeSearch, resetTradeMetadataCacheForTests } from "./trade.js";
 
 test("builds and ranks a helmet search for cold resistance, life, budget, and required level", async () => {
   resetTradeMetadataCacheForTests();
@@ -330,6 +330,86 @@ test("does not floor the search minimum to 1 for a stat with a negative baseline
     // excluded from the search.
     assert.equal(postedQuery.query.stats[0].filters[0].value.min, -19);
     assert.equal(result.appliedFilters.minimumCandidateValues.fire_resistance, -19);
+  } finally {
+    globalThis.fetch = originalFetch;
+    resetTradeMetadataCacheForTests();
+  }
+});
+
+test("createTradeSearch builds custom trade query with stat filters, category, and budget", async () => {
+  resetTradeMetadataCacheForTests();
+  const originalFetch = globalThis.fetch;
+  let postedQuery: any;
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (url.includes("/api/trade2/search/poe2/Standard")) {
+      postedQuery = JSON.parse(String(init?.body));
+      return new Response(JSON.stringify({ id: "custom-search-id", result: ["item-1"], total: 42 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json", "x-rate-limit-account": "10:10:60" },
+      });
+    }
+    if (url.includes("/api/trade2/fetch/item-1?query=custom-search-id")) {
+      return new Response(JSON.stringify({ result: [{
+        id: "item-1",
+        item: {
+          name: "Sprint Boots", typeLine: "Iron Greaves", baseType: "Iron Greaves", rarity: "Rare", ilvl: 50,
+          identified: true, explicitMods: ["30% increased Movement Speed", "+60 to maximum Life"], properties: [],
+        },
+        listing: { price: { amount: 15, currency: "chaos" } },
+      }] }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+
+  try {
+    const result = await createTradeSearch({
+      league: "Standard",
+      slot: "Boots",
+      stats: [
+        { stat: "movement_speed", min: 25 },
+        { stat: "maximum_life", min: 50 },
+      ],
+      maxPrice: 20,
+      currency: "chaos",
+      maxRequiredLevel: 60,
+    });
+
+    assert.equal(result.searchUrl, "https://www.pathofexile.com/trade2/search/poe2/Standard/custom-search-id");
+    assert.ok(result.directUrl.startsWith("https://www.pathofexile.com/trade2/search/poe2/Standard?q="));
+    assert.equal(result.totalMatches, 42);
+    assert.equal(postedQuery.query.filters.type_filters.filters.category.option, "armour.boots");
+    assert.equal(postedQuery.query.filters.req_filters.filters.lvl.max, 60);
+    assert.deepEqual(postedQuery.query.filters.trade_filters.filters.price, { max: 20, option: "chaos" });
+    assert.equal(result.candidates.length, 1);
+    assert.equal(result.candidates[0].name, "Sprint Boots");
+    assert.equal(result.candidates[0].price?.amount, 15);
+  } finally {
+    globalThis.fetch = originalFetch;
+    resetTradeMetadataCacheForTests();
+  }
+});
+
+test("createTradeSearch falls back to directUrl when trade API search fails without throwing", async () => {
+  resetTradeMetadataCacheForTests();
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    throw new Error("Network timeout or rate limited");
+  };
+
+  try {
+    const result = await createTradeSearch({
+      league: "Standard",
+      category: "armour.helmet",
+      stats: [{ stat: "cold_resistance", min: 30 }],
+      maxPrice: 50,
+    });
+
+    assert.ok(result.searchUrl.startsWith("https://www.pathofexile.com/trade2/search/poe2/Standard?q="));
+    assert.equal(result.searchUrl, result.directUrl);
+    assert.ok(result.warning?.includes("Live API search query could not be executed"));
+    assert.equal(result.candidates.length, 0);
+    assert.equal(result.totalMatches, 0);
   } finally {
     globalThis.fetch = originalFetch;
     resetTradeMetadataCacheForTests();

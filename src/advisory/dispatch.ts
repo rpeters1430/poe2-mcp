@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { AdvisoryAction, AdvisoryResult } from "../types.js";
+import { broadcastAdvisory } from "../web/ws.js";
 
 /**
  * Fulfills an AdvisoryAction from the AI. Every branch here is a side
@@ -48,15 +49,28 @@ async function sendDesktopNotification(title: string, body: string): Promise<voi
   }
 }
 
-async function speak(text: string): Promise<void> {
+let lastTtsTimestamp = 0;
+const TTS_MIN_COOLDOWN_MS = 1500;
+
+async function speak(rawText: string): Promise<void> {
+  const sanitized = rawText.replace(/[\r\n\t]+/g, " ").trim().slice(0, 300);
+  if (!sanitized) return;
+
+  const now = Date.now();
+  const elapsed = now - lastTtsTimestamp;
+  if (elapsed < TTS_MIN_COOLDOWN_MS) {
+    await new Promise((resolve) => setTimeout(resolve, TTS_MIN_COOLDOWN_MS - elapsed));
+  }
+  lastTtsTimestamp = Date.now();
+
   const platform = os.platform();
   if (platform === "linux") {
     // Requires `espeak-ng` or similar TTS to be installed; adjust as needed.
-    await runCommand("espeak-ng", [text]);
+    await runCommand("espeak-ng", [sanitized]);
   } else if (platform === "darwin") {
-    await runCommand("say", [text]);
+    await runCommand("say", [sanitized]);
   } else if (platform === "win32") {
-    const psCommand = `Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak('${text.replace(/'/g, "''")}')`;
+    const psCommand = `Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak('${sanitized.replace(/'/g, "''")}')`;
     await runCommand("powershell", ["-Command", psCommand]);
   } else {
     throw new Error(`No TTS method wired up for platform ${platform}`);
@@ -65,6 +79,12 @@ async function speak(text: string): Promise<void> {
 
 export async function dispatchAdvisory(action: AdvisoryAction): Promise<AdvisoryResult> {
   const dispatchedAt = new Date().toISOString();
+  let wsBroadcasted = false;
+  try {
+    broadcastAdvisory(action);
+    wsBroadcasted = true;
+  } catch {}
+
   try {
     switch (action.type) {
       case "log_note": {
@@ -101,6 +121,14 @@ export async function dispatchAdvisory(action: AdvisoryAction): Promise<Advisory
     }
     return { delivered: true, dispatchedVia: action.type, dispatchedAt };
   } catch (err) {
+    if (wsBroadcasted) {
+      return {
+        delivered: true,
+        dispatchedVia: action.type,
+        dispatchedAt,
+        error: `Local OS command failed (${err instanceof Error ? err.message : String(err)}), but advisory was broadcast to connected dashboard/watcher clients via WebSocket.`,
+      };
+    }
     return {
       delivered: false,
       dispatchedVia: action.type,

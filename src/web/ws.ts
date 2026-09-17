@@ -38,3 +38,15 @@ export function broadcastClipboardItem(text: string): void {
     if (client.readyState === client.OPEN) client.send(payload);
   }
 }
+
+export function broadcastAdvisory(action: unknown): void {
+  const payload = JSON.stringify({
+    type: "advisory",
+    action,
+    dispatchedAt: new Date().toISOString(),
+  });
+  for (const client of clients) {
+    if (client.readyState === client.OPEN) client.send(payload);
+  }
+}
+

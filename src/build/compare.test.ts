@@ -62,3 +62,30 @@ test("matches PoB and GGG variants of the same slot", () => {
   assert.equal(result.current?.name, "Old Helm");
   assert.equal(result.defensesAfter!.life, 50);
 });
+
+test("infers slot from PoE 2 Item Class header", () => {
+  const inv = snapshot([item({ slot: "Offhand", name: "Old Quiver", baseType: "Broadhead Quiver" })]);
+  const candidate = parseItemText(
+    `Item Class: Quivers\nRarity: Rare\nStorm Flight\nFire Arrow Quiver\n--------\n+40 to maximum Life`
+  );
+  const result = compareItem(inv, candidate);
+  assert.equal(result.slot, "Offhand");
+  assert.equal(result.current?.name, "Old Quiver");
+});
+
+test("evaluates both rings and recommends replacing the weaker ring when both are equipped", () => {
+  const ring1 = item({ slot: "Ring", name: "Ring 1 (Strong)", mods: ["+80 to maximum Life"] });
+  const ring2 = item({ slot: "Ring2", name: "Ring 2 (Weak)", mods: ["+10 to maximum Life"] });
+  const inv = snapshot([ring1, ring2]);
+
+  const candidate = parseItemText(`Item Class: Rings\nRarity: Rare\nOmega Band\nRuby Ring\n--------\n+60 to maximum Life`);
+  const result = compareItem(inv, candidate);
+
+  assert.ok(result.ringComparisons);
+  assert.equal(result.ringComparisons.recommendedSlot, "Ring2");
+  assert.equal(result.slot, "Ring2");
+  assert.equal(result.current?.name, "Ring 2 (Weak)");
+  const lifeDelta = result.statDeltas.find((d) => d.stat === "maximum_life");
+  assert.equal(lifeDelta?.delta, 50); // 60 - 10 = +50 gain
+});
+

@@ -3,6 +3,7 @@ import type { ClientLogTailer } from "../adapters/client-log.js";
 import * as handlers from "../tools/handlers.js";
 import type { GameEventType } from "../types.js";
 import { broadcastClipboardItem } from "./ws.js";
+import { saveLatestClipboardItem, getLatestClipboardItem } from "../adapters/clipboard-store.js";
 
 function sendJson(res: ServerResponse, status: number, data: unknown): void {
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
@@ -97,13 +98,23 @@ export async function handleApi(
       return true;
     }
 
+    if ((pathname === "/api/status" || pathname === "/api/server-status") && method === "GET") {
+      sendJson(res, 200, await handlers.getServerStatus(log));
+      return true;
+    }
+
     if (pathname === "/api/compare-item" && method === "POST") {
       const body = await readJsonBody(req);
-      const itemText = String(body.itemText ?? "");
-      if (!itemText) throw new Error("itemText is required");
+      const itemText = typeof body.itemText === "string" ? body.itemText : undefined;
       const slot = typeof body.slot === "string" ? body.slot : undefined;
       const name = typeof body.characterName === "string" ? body.characterName : undefined;
       sendJson(res, 200, await handlers.compareItem(itemText, slot, name, log));
+      return true;
+    }
+
+    if (pathname === "/api/trade/search" && method === "POST") {
+      const body = await readJsonBody(req);
+      sendJson(res, 200, await handlers.createTradeSearchHandler(body as any));
       return true;
     }
 
@@ -137,8 +148,35 @@ export async function handleApi(
       const body = await readJsonBody(req);
       const text = String(body.text ?? "");
       if (!text) throw new Error("text is required");
+      const record = saveLatestClipboardItem(text);
       broadcastClipboardItem(text);
-      sendJson(res, 200, { broadcast: true });
+      sendJson(res, 200, {
+        broadcast: true,
+        copiedAt: record.copiedAt,
+        itemName: record.parsed.name,
+        baseType: record.parsed.baseType,
+        rarity: record.parsed.rarity,
+      });
+      return true;
+    }
+
+    if (pathname === "/api/clipboard-item" && method === "GET") {
+      const latest = getLatestClipboardItem();
+      if (!latest) {
+        sendJson(res, 200, { available: false });
+        return true;
+      }
+      const diffMs = Date.now() - new Date(latest.copiedAt).getTime();
+      sendJson(res, 200, {
+        available: true,
+        copiedAt: latest.copiedAt,
+        secondsAgo: Math.max(0, Math.round(diffMs / 1000)),
+        itemName: latest.parsed.name,
+        baseType: latest.parsed.baseType,
+        rarity: latest.parsed.rarity,
+        text: latest.text,
+        parsed: latest.parsed,
+      });
       return true;
     }
 

@@ -6,11 +6,11 @@ services:
     ports:
       - "${POE2_SERVE_PORT:-8787}:8787"
     environment:
-      - POE2_GGG_CLIENT_ID=${POE2_GGG_CLIENT_ID}
-      - POE2_CONTACT_EMAIL=${POE2_CONTACT_EMAIL}
-      - POE2_ACCOUNT_NAME=${POE2_ACCOUNT_NAME}
-      - POE2_WEB_TOKEN=${POE2_WEB_TOKEN}
-      - POE2_TRADE_POESESSID=${POE2_TRADE_POESESSID}
+      - POE2_GGG_CLIENT_ID=${POE2_GGG_CLIENT_ID:-}
+      - POE2_CONTACT_EMAIL=${POE2_CONTACT_EMAIL:-}
+      - POE2_ACCOUNT_NAME=${POE2_ACCOUNT_NAME:-}
+      - POE2_WEB_TOKEN=${POE2_WEB_TOKEN:-}
+      - POE2_TRADE_POESESSID=${POE2_TRADE_POESESSID:-}
       # Auto-detection candidates in src/config.ts are gated on the
       # container's own platform (linux), not the Windows host's, so these
       # three must be set explicitly rather than relying on auto-detect.

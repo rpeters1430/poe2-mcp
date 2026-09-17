@@ -1,11 +1,13 @@
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { ClientLogTailer } from "./adapters/client-log.js";
 import { registerTools } from "./tools/register.js";
+import { SERVER_INSTRUCTIONS } from "./instructions.js";
 import { handleApi } from "./web/api.js";
 import { handleUpgrade } from "./web/ws.js";
 import { checkWebToken } from "./web/auth.js";
@@ -28,6 +30,75 @@ const CONTENT_TYPES: Record<string, string> = {
   ".svg": "image/svg+xml",
 };
 
+const transports = new Map<string, StreamableHTTPServerTransport>();
+
+function createServerInstance(log: ClientLogTailer): McpServer {
+  const server = new McpServer(
+    { name: "poe2-mcp-server", version: "0.1.0" },
+    { instructions: SERVER_INSTRUCTIONS }
+  );
+  registerTools(server, log);
+  return server;
+}
+
+async function handleMcp(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  log: ClientLogTailer
+): Promise<void> {
+  const sessionId = req.headers["mcp-session-id"] as string | undefined;
+
+  if (req.method === "GET") {
+    if (!sessionId || !transports.has(sessionId)) {
+      res.writeHead(400, { "Content-Type": "text/plain" }).end("Invalid or missing session ID");
+      return;
+    }
+    const transport = transports.get(sessionId)!;
+    await transport.handleRequest(req, res);
+    return;
+  }
+
+  if (req.method === "DELETE") {
+    if (!sessionId || !transports.has(sessionId)) {
+      res.writeHead(400, { "Content-Type": "text/plain" }).end("Invalid or missing session ID");
+      return;
+    }
+    const transport = transports.get(sessionId)!;
+    await transport.handleRequest(req, res);
+    transports.delete(sessionId);
+    return;
+  }
+
+  if (req.method === "POST") {
+    if (sessionId && transports.has(sessionId)) {
+      const transport = transports.get(sessionId)!;
+      await transport.handleRequest(req, res);
+      return;
+    }
+
+    // New session / initialization request
+    let transport: StreamableHTTPServerTransport;
+    transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: () => randomUUID(),
+      onsessioninitialized: (sid) => {
+        transports.set(sid, transport);
+      },
+    });
+
+    transport.onclose = () => {
+      const sid = transport.sessionId;
+      if (sid) transports.delete(sid);
+    };
+
+    const server = createServerInstance(log);
+    await server.connect(transport);
+    await transport.handleRequest(req, res);
+    return;
+  }
+
+  res.writeHead(405, { "Content-Type": "text/plain" }).end("Method Not Allowed");
+}
+
 function serveStatic(req: http.IncomingMessage, res: http.ServerResponse, pathname: string): void {
   const relative = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
   const resolved = path.normalize(path.join(PUBLIC_DIR, relative));
@@ -46,13 +117,8 @@ function serveStatic(req: http.IncomingMessage, res: http.ServerResponse, pathna
 }
 
 async function main() {
-  const server = new McpServer({ name: "poe2-mcp-server", version: "0.1.0" });
   const log = new ClientLogTailer();
   log.start();
-  registerTools(server, log);
-
-  const mcpTransport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-  await server.connect(mcpTransport);
 
   const httpServer = http.createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
@@ -60,7 +126,18 @@ async function main() {
 
     if (pathname === "/mcp") {
       if (!checkWebToken(req, res)) return;
-      mcpTransport.handleRequest(req, res);
+      handleMcp(req, res, log).catch((err) => {
+        console.error("[poe2-mcp-server] MCP request error:", err);
+        if (!res.headersSent) {
+          res.writeHead(500, { "Content-Type": "application/json" }).end(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              error: { code: -32603, message: err instanceof Error ? err.message : String(err) },
+              id: null,
+            })
+          );
+        }
+      });
       return;
     }
 

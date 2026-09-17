@@ -30,7 +30,9 @@ import {
   pobBuildToPassiveTree,
   pobBuildToCharacterState,
 } from "../adapters/active-build.js";
-import type { ActiveBuildRecord, GameEventType, InventorySnapshot } from "../types.js";
+import { getLatestClipboardItem } from "../adapters/clipboard-store.js";
+import { createTradeSearch } from "../adapters/trade.js";
+import type { ActiveBuildRecord, GameEventType, InventorySnapshot, TradeSearchOptions } from "../types.js";
 
 export function activeBuildContext(record: ActiveBuildRecord) {
   const ageMs = Math.max(0, Date.now() - Date.parse(record.refreshedAt));
@@ -173,12 +175,53 @@ export async function getActiveBuildStatus() {
   return fetchActiveBuildStatus();
 }
 
+export function getLatestClipboardItemTool() {
+  const latest = getLatestClipboardItem();
+  if (!latest) {
+    return {
+      available: false,
+      message:
+        "No item has been copied yet via Ctrl+C. Ensure the clipboard watcher is running on your gaming PC (npm run watch-clipboard) and copy an item in Path of Exile 2 using Ctrl+C.",
+    };
+  }
+  const diffMs = Date.now() - new Date(latest.copiedAt).getTime();
+  return {
+    available: true,
+    copiedAt: latest.copiedAt,
+    secondsAgo: Math.max(0, Math.round(diffMs / 1000)),
+    itemName: latest.parsed.name,
+    baseType: latest.parsed.baseType,
+    rarity: latest.parsed.rarity,
+    itemText: latest.text,
+    parsed: latest.parsed,
+  };
+}
+
 export async function compareItem(
-  itemText: string,
+  itemText: string | undefined,
   slot: string | undefined,
   characterName: string | undefined,
   log: ClientLogTailer
 ) {
+  let text = itemText?.trim();
+  let clipboardInfo: { copiedAt: string; secondsAgo: number } | undefined;
+  if (!text || text.toLowerCase() === "latest") {
+    const latest = getLatestClipboardItem();
+    if (!latest) {
+      throw new Error(
+        "No itemText was provided, and no item has been copied with Ctrl+C yet. " +
+          "Copy an item in Path of Exile 2 using Ctrl+C (with 'npm run watch-clipboard' running on your gaming PC), " +
+          "or pass itemText explicitly."
+      );
+    }
+    text = latest.text;
+    const diffMs = Date.now() - new Date(latest.copiedAt).getTime();
+    clipboardInfo = {
+      copiedAt: latest.copiedAt,
+      secondsAgo: Math.max(0, Math.round(diffMs / 1000)),
+    };
+  }
+
   let inventory: InventorySnapshot;
   let activeBuildCtx: ReturnType<typeof activeBuildContext> | undefined;
   try {
@@ -196,8 +239,12 @@ export async function compareItem(
     inventory = pobBuildToInventorySnapshot(active.build, active.identity.characterName ?? undefined);
     activeBuildCtx = activeBuildContext(active);
   }
-  const result = compareItemCore(inventory, parseItemText(itemText), slot);
-  return activeBuildCtx ? { ...result, activeBuild: activeBuildCtx } : result;
+  const result = compareItemCore(inventory, parseItemText(text), slot);
+  return {
+    ...result,
+    ...(clipboardInfo ? { clipboard: clipboardInfo } : {}),
+    ...(activeBuildCtx ? { activeBuild: activeBuildCtx } : {}),
+  };
 }
 
 export function getRecentEvents(
@@ -218,4 +265,98 @@ export function getCurrentArea(log: ClientLogTailer) {
 
 export function getSessionSummary(log: ClientLogTailer) {
   return log.getSessionSummary();
+}
+
+export async function getServerStatus(log: ClientLogTailer) {
+  const uptimeSeconds = Math.floor(process.uptime());
+
+  let activeCharacterName: string | null = null;
+  let activeCharacterSource = "none";
+  try {
+    const charState = await getActiveCharacter(log);
+    activeCharacterName = charState.name;
+    activeCharacterSource = charState.source;
+  } catch {}
+
+  let buildStatus = null;
+  try {
+    buildStatus = await fetchActiveBuildStatus();
+  } catch {}
+
+  const logPath = log.getLogPath();
+  const currentArea = log.getCurrentArea();
+  const sessionSummary = log.getSessionSummary();
+
+  const latestItem = getLatestClipboardItem();
+  const clipboardStatus = latestItem
+    ? {
+        hasItem: true,
+        copiedAt: latestItem.copiedAt,
+        secondsAgo: Math.max(0, Math.round((Date.now() - new Date(latestItem.copiedAt).getTime()) / 1000)),
+        name: latestItem.parsed.name,
+        baseType: latestItem.parsed.baseType,
+        rarity: latestItem.parsed.rarity,
+        itemClass: latestItem.parsed.itemClass ?? null,
+      }
+    : {
+        hasItem: false,
+        copiedAt: null,
+        secondsAgo: null,
+        name: null,
+        baseType: null,
+        rarity: null,
+        itemClass: null,
+      };
+
+  const accountName = resolveAccountName();
+
+  return {
+    status: "healthy",
+    timestamp: new Date().toISOString(),
+    version: "0.1.0",
+    uptimeSeconds,
+    account: {
+      accountName: accountName ?? null,
+    },
+    activeCharacter: {
+      name: activeCharacterName,
+      source: activeCharacterSource,
+    },
+    activeBuild: buildStatus,
+    gameLog: {
+      tailing: logPath !== null,
+      logConfigured: logPath !== null,
+      currentArea: currentArea.area,
+      enteredAreaAt: currentArea.enteredAt,
+      session: {
+        startedAt: sessionSummary.sessionStartedAt,
+        areasVisited: sessionSummary.areasVisited,
+        deaths: sessionSummary.deaths,
+        levelUps: sessionSummary.levelUps,
+      },
+    },
+    clipboard: clipboardStatus,
+    endpoints: {
+      mcpHttp: "/mcp",
+      webDashboard: "/",
+      webSocket: "/ws",
+      restApi: {
+        status: "/api/status",
+        clipboard: "/api/clipboard-item",
+        compare: "/api/compare-item",
+        activeBuild: "/api/active-build-status",
+        events: "/api/recent-events",
+        tradeSearch: "/api/trade/search",
+      },
+    },
+  };
+}
+
+export async function createTradeSearchHandler(options: TradeSearchOptions) {
+  let resolvedLeague = options.league;
+  if (!resolvedLeague) {
+    const active = await resolveActiveBuildRecord();
+    resolvedLeague = active?.identity.league ?? "Standard";
+  }
+  return createTradeSearch({ ...options, league: resolvedLeague });
 }

@@ -33,9 +33,13 @@ test("rejects symlink escapes and non-XML files", () => {
   const target = path.join(outside, "secret.xml");
   const link = path.join(root, "linked.xml");
   fs.writeFileSync(target, "secret");
-  fs.symlinkSync(target, link);
-  assert.throws(() => validatePobBuildFile(link, root), /must be inside/);
-  assert.throws(() => readPobBuildFile(link, root));
+  try {
+    fs.symlinkSync(target, link);
+    assert.throws(() => validatePobBuildFile(link, root), /must be inside/);
+    assert.throws(() => readPobBuildFile(link, root));
+  } catch (err: any) {
+    if (err?.code !== "EPERM") throw err;
+  }
 
   const textFile = path.join(root, "notes.txt");
   fs.writeFileSync(textFile, "not a build");

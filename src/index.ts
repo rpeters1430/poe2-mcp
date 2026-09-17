@@ -2,12 +2,16 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { ClientLogTailer } from "./adapters/client-log.js";
 import { registerTools } from "./tools/register.js";
+import { SERVER_INSTRUCTIONS } from "./instructions.js";
 
 async function main() {
-  const server = new McpServer({
-    name: "poe2-mcp-server",
-    version: "0.1.0",
-  });
+  const server = new McpServer(
+    {
+      name: "poe2-mcp-server",
+      version: "0.1.0",
+    },
+    { instructions: SERVER_INSTRUCTIONS }
+  );
 
   const log = new ClientLogTailer();
   log.start();

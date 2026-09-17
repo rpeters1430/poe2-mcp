@@ -49,3 +49,28 @@ test("raw diagnostics cannot evict recognized events from session state", async 
     500
   );
 });
+
+test("waits for full newline and handles split chunk writes cleanly", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "poe2-mcp-log-split-test-"));
+  const logPath = path.join(dir, "Client.txt");
+  fs.writeFileSync(logPath, "");
+
+  const tailer = new ClientLogTailer(logPath);
+  tailer.start();
+
+  // Write first half of a line (without newline)
+  fs.appendFileSync(logPath, `${prefix}: You have en`);
+  await (tailer as unknown as { pollOnce(): Promise<void> }).pollOnce();
+
+  // Nothing should be parsed yet
+  assert.equal(tailer.getCurrentArea().area, null);
+
+  // Write the remaining part with newline
+  fs.appendFileSync(logPath, `tered The Riverbank.\n`);
+  await (tailer as unknown as { pollOnce(): Promise<void> }).pollOnce();
+
+  // Now it successfully parsed the full line
+  assert.equal(tailer.getCurrentArea().area, "The Riverbank");
+  tailer.stop();
+});
+

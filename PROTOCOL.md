@@ -51,6 +51,7 @@ reliably supports today.
 | `get_offense_stats` | GGG official API (gear-only, computed) | On request (network call) |
 | `compare_item` | Pasted item text + GGG official API | On request (network call) |
 | `find_trade_upgrades` | Equipped gear + GGG trade site | Live search; up to 10 listing details |
+| `create_trade_search` | Custom requirements + GGG trade site | Live search / direct URL; up to 10 listing details |
 | `get_recent_events` | Local `Client.txt` tail | ~1s poll interval |
 | `get_current_area` | Local `Client.txt` tail | ~1s poll interval |
 | `get_session_summary` | Local `Client.txt` tail | ~1s poll interval |
@@ -82,12 +83,12 @@ league identity. File sources are checked by mtime on use; poe.ninja sources
 have a five-minute TTL. `get_active_build_status` exposes only the source
 filename, not its absolute local path.
 
-`find_trade_upgrades` is advisory and read-only: it searches online listings
-and returns an official `pathofexile.com/trade2/...` URL but never whispers,
-reserves, buys, or otherwise performs a trade. Its GGG-hosted endpoint is not
-part of the published developer API, so responses explicitly carry
-`apiStatus: "undocumented_official_site_endpoint"` and may report an access
-warning or require a locally configured session cookie.
+`find_trade_upgrades` and `create_trade_search` are advisory and read-only: they search online
+listings and return official `pathofexile.com/trade2/...` URLs but never whisper, reserve, buy,
+or otherwise perform a trade. Crucially, neither tool requires GGG developer API client ID or
+OAuth credentials. `create_trade_search` takes arbitrary criteria (slot, category, life, resistances,
+budget) and generates both short official URLs (`searchUrl`) and direct browser query URLs
+(`directUrl`) with pre-loaded filters.
 
 A third category, gear-derived build data (`get_passive_tree`,
 `get_defenses`, `get_offense_stats`, `compare_item`), is computed from the

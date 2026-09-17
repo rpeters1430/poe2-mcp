@@ -114,19 +114,18 @@ export class ClientLogTailer {
 
   /** Starts polling the log file for new lines. Safe to call once. */
   start(pollIntervalMs = 1000): void {
-    if (!this.logPath) {
-      console.error(
-        "[poe2-mcp-server] No Client.txt found. Set POE2_CLIENT_LOG_PATH explicitly -- see README.md."
-      );
-      return;
+    if (this.logPath) {
+      // Start at end of file: we only care about events from now on.
+      try {
+        this.offset = fs.statSync(this.logPath).size;
+      } catch {
+        this.offset = 0;
+      }
     }
-    // Start at end of file: we only care about events from now on.
-    try {
-      this.offset = fs.statSync(this.logPath).size;
-    } catch {
-      this.offset = 0;
-    }
-    this.pollHandle = setInterval(() => this.pollOnce().catch((e) => console.error("[poe2-mcp-server] log poll error:", e)), pollIntervalMs);
+    this.pollHandle = setInterval(
+      () => this.pollOnce().catch((e) => console.error("[poe2-mcp-server] log poll error:", e)),
+      pollIntervalMs
+    );
     this.pollHandle.unref();
   }
 
@@ -135,7 +134,20 @@ export class ClientLogTailer {
   }
 
   private async pollOnce(): Promise<void> {
-    if (!this.logPath) return;
+    if (!this.logPath) {
+      const discovered = resolveClientLogPath();
+      if (discovered) {
+        this.logPath = discovered;
+        try {
+          this.offset = fs.statSync(this.logPath).size;
+        } catch {
+          this.offset = 0;
+        }
+      } else {
+        return;
+      }
+    }
+
     let stat: fs.Stats;
     try {
       stat = fs.statSync(this.logPath);
@@ -149,16 +161,48 @@ export class ClientLogTailer {
     }
     if (stat.size === this.offset) return;
 
-    const stream = fs.createReadStream(this.logPath, { start: this.offset, end: stat.size - 1, encoding: "utf8" });
-    const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
-    for await (const line of rl) {
-      if (line.trim().length === 0) continue;
-      const event = parseLine(line);
-      const buffer = event.type === "raw_unmatched" ? this.rawEvents : this.events;
-      buffer.push(event);
-      if (buffer.length > RING_BUFFER_SIZE) buffer.shift();
+    const bytesToRead = stat.size - this.offset;
+    if (bytesToRead <= 0) return;
+
+    try {
+      const fd = fs.openSync(this.logPath, "r");
+      let buffer: Buffer;
+      try {
+        buffer = Buffer.alloc(bytesToRead);
+        fs.readSync(fd, buffer, 0, bytesToRead, this.offset);
+      } finally {
+        fs.closeSync(fd);
+      }
+
+      // Find the last newline in the buffer to avoid splitting mid-line writes
+      let lastNewline = -1;
+      for (let i = buffer.length - 1; i >= 0; i--) {
+        if (buffer[i] === 0x0a) {
+          lastNewline = i;
+          break;
+        }
+      }
+
+      // If no newline character found at all, wait for the full line to be written
+      if (lastNewline === -1) {
+        return;
+      }
+
+      const chunk = buffer.subarray(0, lastNewline + 1).toString("utf8");
+      const lines = chunk.split(/\r?\n/);
+      for (const line of lines) {
+        if (line.trim().length === 0) continue;
+        const event = parseLine(line);
+        const targetBuffer = event.type === "raw_unmatched" ? this.rawEvents : this.events;
+        targetBuffer.push(event);
+        if (targetBuffer.length > RING_BUFFER_SIZE) targetBuffer.shift();
+      }
+
+      this.offset += lastNewline + 1;
+    } catch {
+      // Handle temporary file lock during game write
+      return;
     }
-    this.offset = stat.size;
   }
 
   getRecentEvents(opts: { sinceIso?: string; limit?: number; types?: GameEventType[] } = {}): GameEvent[] {

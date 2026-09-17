@@ -36,8 +36,8 @@ function stripAugmented(value: string): string {
 }
 
 export function parseItemText(clipboard: string): ParsedItemText {
-  const sections = clipboard
-    .replace(/\r\n/g, "\n")
+  const normalizedClipboard = clipboard.replace(/\r\n/g, "\n");
+  const sections = normalizedClipboard
     .split(/^-{5,}$/m)
     .map((section) =>
       section
@@ -47,7 +47,17 @@ export function parseItemText(clipboard: string): ParsedItemText {
     )
     .filter((lines) => lines.length > 0);
 
-  const header = sections[0] ?? [];
+  // Extract PoE 2 Item Class if present anywhere in the clipboard item text
+  let itemClass: string | null = null;
+  for (const line of normalizedClipboard.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("Item Class:")) {
+      itemClass = trimmed.slice("Item Class:".length).trim();
+      break;
+    }
+  }
+
+  const header = (sections[0] ?? []).filter((line) => !line.startsWith("Item Class:"));
   let rarity: string | null = null;
   let name = "Unknown";
   let baseType = "Unknown";
@@ -101,5 +111,5 @@ export function parseItemText(clipboard: string): ParsedItemText {
     }
   }
 
-  return { name, baseType, rarity, itemLevel, identified, corrupted, properties, mods };
+  return { name, baseType, rarity, itemLevel, identified, corrupted, properties, mods, itemClass };
 }

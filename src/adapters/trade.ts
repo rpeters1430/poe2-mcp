@@ -3,7 +3,8 @@ import { parseMods, sumStat } from "../build/mod-parser.js";
 import { normalizeEquipmentSlot } from "../build/slots.js";
 import type {
   InventoryItem, InventorySnapshot, ItemProperty, ParsedItemText,
-  TradeCandidate, TradePriority, TradeUpgradeResult,
+  TradeCandidate, TradePriority, TradeSearchOptions, TradeSearchResult,
+  TradeStatFilter, TradeUpgradeResult,
 } from "../types.js";
 
 const TRADE_BASE = "https://www.pathofexile.com";
@@ -52,7 +53,7 @@ interface FetchResult {
 }
 interface FetchResponse { result?: FetchResult[] }
 
-const SLOT_CATEGORY: Record<FindTradeUpgradesOptions["slot"], string> = {
+const SLOT_CATEGORY: Record<string, string> = {
   Helm: "armour.helmet",
   BodyArmour: "armour.chest",
   Gloves: "armour.gloves",
@@ -61,10 +62,42 @@ const SLOT_CATEGORY: Record<FindTradeUpgradesOptions["slot"], string> = {
   Amulet: "accessory.amulet",
   Ring: "accessory.ring",
   Ring2: "accessory.ring",
-  // Default only -- "Offhand" spans four distinct trade categories in PoE2
-  // (Shield, Buckler, Focus, Quiver); resolveOffhandCategory below narrows
-  // this from the currently equipped item's base type when possible.
   Offhand: "armour.shield",
+  Weapon: "weapon",
+};
+
+export const COMMON_STAT_MAP: Record<string, string> = {
+  life: "pseudo.pseudo_total_life",
+  maximum_life: "pseudo.pseudo_total_life",
+  max_life: "pseudo.pseudo_total_life",
+  flat_life: "pseudo.pseudo_total_life",
+  fire_resistance: "pseudo.pseudo_total_fire_resistance",
+  fire_res: "pseudo.pseudo_total_fire_resistance",
+  cold_resistance: "pseudo.pseudo_total_cold_resistance",
+  cold_res: "pseudo.pseudo_total_cold_resistance",
+  lightning_resistance: "pseudo.pseudo_total_lightning_resistance",
+  lightning_res: "pseudo.pseudo_total_lightning_resistance",
+  chaos_resistance: "pseudo.pseudo_total_chaos_resistance",
+  chaos_res: "pseudo.pseudo_total_chaos_resistance",
+  all_elemental_resistance: "pseudo.pseudo_total_all_elemental_resistances",
+  all_elemental_resistances: "pseudo.pseudo_total_all_elemental_resistances",
+  all_res: "pseudo.pseudo_total_all_elemental_resistances",
+  total_elemental_resistance: "pseudo.pseudo_total_elemental_resistance",
+  elemental_resistance: "pseudo.pseudo_total_elemental_resistance",
+  movement_speed: "pseudo.pseudo_increased_movement_speed",
+  movespeed: "pseudo.pseudo_increased_movement_speed",
+  ms: "pseudo.pseudo_increased_movement_speed",
+  energy_shield: "pseudo.pseudo_total_energy_shield",
+  max_energy_shield: "pseudo.pseudo_total_energy_shield",
+  es: "pseudo.pseudo_total_energy_shield",
+  strength: "pseudo.pseudo_total_strength",
+  str: "pseudo.pseudo_total_strength",
+  dexterity: "pseudo.pseudo_total_dexterity",
+  dex: "pseudo.pseudo_total_dexterity",
+  intelligence: "pseudo.pseudo_total_intelligence",
+  int: "pseudo.pseudo_total_intelligence",
+  all_attributes: "pseudo.pseudo_total_all_attributes",
+  attributes: "pseudo.pseudo_total_attributes",
 };
 
 const OFFHAND_CATEGORY_KEYWORDS: Array<{ pattern: RegExp; category: string }> = [
@@ -250,6 +283,7 @@ export async function findTradeUpgrades(options: FindTradeUpgradesOptions): Prom
   };
 
   const league = encodeURIComponent(options.league);
+  const directUrl = `${TRADE_BASE}/trade2/search/poe2/${league}?q=${encodeURIComponent(JSON.stringify(query))}`;
   const { data: search, response } = await tradeFetch<SearchResponse>(
     `${TRADE_BASE}/api/trade2/search/poe2/${league}`,
     { method: "POST", headers: headers(true), body: JSON.stringify(query) }
@@ -310,6 +344,7 @@ export async function findTradeUpgrades(options: FindTradeUpgradesOptions): Prom
     apiStatus: "undocumented_official_site_endpoint",
     league: options.league,
     searchUrl,
+    directUrl,
     totalMatches: search.total ?? search.result?.length ?? 0,
     currentItem: equipped ? { name: equipped.name, slot: equipped.slot, priorityValues: before } : null,
     appliedFilters: {
@@ -328,6 +363,180 @@ export async function findTradeUpgrades(options: FindTradeUpgradesOptions): Prom
       "Search results are live listings, not reservations. The endpoint is hosted by GGG but is not in the published developer API; " +
       "open searchUrl to inspect/contact sellers. The tool ranks up to the first 10 price-sorted results; " +
       "candidate scores are gear-only deltas for the requested stats, not a global build optimizer.",
+  };
+}
+
+/**
+ * Creates an official Path of Exile 2 trade search link from arbitrary requirements
+ * (slot, category, base type, rarity, stat filters, budget, level requirement).
+ *
+ * Does NOT require GGG developer API client ID or character authentication.
+ * Returns both a short official search URL and a direct query-encoded URL.
+ */
+export async function createTradeSearch(options: TradeSearchOptions): Promise<TradeSearchResult> {
+  const league = options.league?.trim() || "Standard";
+  const resultLimit = Math.min(Math.max(options.resultLimit ?? 10, 0), 10);
+
+  let category: string | undefined = options.category;
+  if (!category && options.slot) {
+    category = SLOT_CATEGORY[options.slot];
+  }
+
+  const statFilters: Array<{ id: string; label?: string; min?: number; max?: number }> = [];
+  if (options.stats && options.stats.length > 0) {
+    for (const sf of options.stats) {
+      let resolvedId = sf.id;
+      if (!resolvedId && sf.stat) {
+        const key = sf.stat.trim().toLowerCase().replace(/[\s-]+/g, "_");
+        resolvedId = COMMON_STAT_MAP[key];
+        if (!resolvedId) {
+          const priorityMatch = PRIORITIES[key as TradePriority];
+          if (priorityMatch) resolvedId = priorityMatch.fallbackId;
+        }
+      }
+      if (resolvedId) {
+        statFilters.push({
+          id: resolvedId,
+          label: sf.stat,
+          min: sf.min,
+          max: sf.max,
+        });
+      }
+    }
+  }
+
+  const queryObj: Record<string, unknown> = {
+    query: {
+      status: { option: options.onlineOnly !== false ? "online" : "any" },
+    },
+    sort: { price: "asc" },
+  };
+
+  const queryInner = queryObj.query as Record<string, unknown>;
+  if (options.name) queryInner.name = options.name;
+  if (options.baseType) queryInner.type = options.baseType;
+
+  const filters: Record<string, unknown> = {};
+  if (category || options.rarity) {
+    const typeFilters: Record<string, unknown> = {};
+    if (category) typeFilters.category = { option: category };
+    if (options.rarity) typeFilters.rarity = { option: options.rarity };
+    filters.type_filters = { filters: typeFilters };
+  }
+
+  if (options.maxRequiredLevel !== undefined) {
+    filters.req_filters = { filters: { lvl: { max: options.maxRequiredLevel } } };
+  }
+
+  if (options.maxPrice !== undefined) {
+    filters.trade_filters = {
+      filters: { price: { max: options.maxPrice, option: options.currency ?? "chaos" } },
+    };
+  }
+
+  if (Object.keys(filters).length > 0) {
+    queryInner.filters = filters;
+  }
+
+  if (statFilters.length > 0) {
+    queryInner.stats = [
+      {
+        type: "and",
+        filters: statFilters.map((sf) => ({
+          id: sf.id,
+          value: {
+            ...(sf.min !== undefined ? { min: sf.min } : {}),
+            ...(sf.max !== undefined ? { max: sf.max } : {}),
+          },
+        })),
+      },
+    ];
+  }
+
+  const encodedLeague = encodeURIComponent(league);
+  const directUrl = `${TRADE_BASE}/trade2/search/poe2/${encodedLeague}?q=${encodeURIComponent(JSON.stringify(queryObj))}`;
+
+  let searchUrl = directUrl;
+  let totalMatches = 0;
+  let candidates: TradeCandidate[] = [];
+  let warning: string | null = null;
+  let rateLimit: Record<string, string> | undefined;
+
+  try {
+    const { data: search, response } = await tradeFetch<SearchResponse>(
+      `${TRADE_BASE}/api/trade2/search/poe2/${encodedLeague}`,
+      { method: "POST", headers: headers(true), body: JSON.stringify(queryObj) }
+    );
+
+    rateLimit = Object.fromEntries(
+      [...response.headers.entries()].filter(([name]) => name.toLowerCase().startsWith("x-rate-limit"))
+    );
+
+    if (search.id) {
+      searchUrl = `${TRADE_BASE}/trade2/search/poe2/${encodedLeague}/${encodeURIComponent(search.id)}`;
+      totalMatches = search.total ?? search.result?.length ?? 0;
+
+      const ids = (search.result ?? []).slice(0, resultLimit);
+      if (ids.length > 0 && resultLimit > 0) {
+        try {
+          const details = await tradeFetch<FetchResponse>(
+            `${TRADE_BASE}/api/trade2/fetch/${ids.map(encodeURIComponent).join(",")}?query=${encodeURIComponent(search.id)}`,
+            { headers: headers() }
+          );
+          const fetched = details.data.result ?? [];
+          candidates = fetched.flatMap((entry): TradeCandidate[] => {
+            if (!entry.item) return [];
+            const parsed = toParsedItem(entry.item);
+            return [
+              {
+                id: entry.id ?? null,
+                name: parsed.name,
+                baseType: parsed.baseType,
+                itemLevel: parsed.itemLevel,
+                price: entry.listing?.price
+                  ? { amount: entry.listing.price.amount ?? null, currency: entry.listing.price.currency ?? null }
+                  : null,
+                priorityDeltas: {},
+                improvesAllPriorities: true,
+                mods: parsed.mods,
+                score: 1,
+              },
+            ];
+          });
+        } catch (fetchErr) {
+          warning = `Search succeeded, but candidate preview details could not be retrieved: ${(fetchErr as Error).message}`;
+        }
+      }
+    }
+  } catch (err) {
+    warning = `Live API search query could not be executed (${(err as Error).message}). A direct browser search link with all filters pre-loaded was generated instead.`;
+  }
+
+  return {
+    source: "poe_trade_site",
+    createdAt: new Date().toISOString(),
+    league,
+    searchUrl,
+    directUrl,
+    totalMatches,
+    query: queryObj,
+    appliedFilters: {
+      slot: options.slot,
+      category,
+      name: options.name,
+      baseType: options.baseType,
+      rarity: options.rarity,
+      stats: statFilters,
+      maxPrice: options.maxPrice !== undefined ? { amount: options.maxPrice, currency: options.currency ?? "chaos" } : undefined,
+      maxRequiredLevel: options.maxRequiredLevel,
+      onlineOnly: options.onlineOnly !== false,
+    },
+    candidates,
+    warning,
+    rateLimit,
+    note:
+      "Click searchUrl or directUrl to open the search directly on the official Path of Exile 2 trade site with all requested filters. " +
+      "No GGG API client ID or OAuth credentials are required.",
   };
 }
 

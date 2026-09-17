@@ -22,7 +22,7 @@ import {
   getActiveBuildStatus,
   pobBuildToInventorySnapshot,
 } from "../adapters/active-build.js";
-import { findTradeUpgrades } from "../adapters/trade.js";
+import { findTradeUpgrades, createTradeSearch } from "../adapters/trade.js";
 import * as handlers from "./handlers.js";
 import { activeBuildContext, resolveCharacterName } from "./handlers.js";
 
@@ -275,14 +275,46 @@ export function registerTools(server: McpServer, log: ClientLogTailer): void {
   );
 
   server.registerTool(
+    "get_latest_clipboard_item",
+    {
+      title: "Get latest copied item from clipboard",
+      description:
+        "Return the most recent Path of Exile 2 item copied to the Windows clipboard via Ctrl+C in-game " +
+        "(captured by the clipboard watcher). Includes raw text, parsed attributes/mods, and seconds elapsed since copy.",
+      inputSchema: {},
+      annotations: { readOnlyHint: true },
+    },
+    async () => jsonResult(handlers.getLatestClipboardItemTool())
+  );
+
+  server.registerTool(
+    "get_server_status",
+    {
+      title: "Get server health and runtime status",
+      description:
+        "Get unified diagnostics on the PoE2 MCP server: server version, uptime, active character, active build freshness and summary, " +
+        "game client log tailer state (current area, session stats), latest copied clipboard item, and endpoint availability.",
+      inputSchema: {},
+      annotations: { readOnlyHint: true },
+    },
+    async () => jsonResult(await handlers.getServerStatus(log))
+  );
+
+  server.registerTool(
     "compare_item",
     {
       title: "Compare an item against currently equipped gear",
       description:
         "Parse an item's full text (as copied from the game with Ctrl+C, or from a trade site) and diff it " +
-        "against whatever the character currently has equipped in the matching slot (via GGG API or active PoB / poe.ninja build).",
+        "against whatever the character currently has equipped in the matching slot (via GGG API or active PoB / poe.ninja build). " +
+        "If itemText is omitted or 'latest', automatically uses the most recent item copied in-game via Ctrl+C.",
       inputSchema: {
-        itemText: z.string().min(1).describe("Full item text, including the 'Rarity:'/'--------' section markers"),
+        itemText: z
+          .string()
+          .optional()
+          .describe(
+            "Full item text, including the 'Rarity:'/'--------' section markers. If omitted or 'latest', uses the most recent Ctrl+C item."
+          ),
         slot: z
           .string()
           .optional()
@@ -309,9 +341,8 @@ export function registerTools(server: McpServer, log: ClientLogTailer): void {
       title: "Find live PoE2 trade upgrades",
       description:
         "Search live Path of Exile 2 listings for an item that improves every requested stat over the currently " +
-        "equipped slot, enforce budget and required-level limits, rank fetched candidates, and return the official " +
-        "trade search URL. Uses GGG's official trade-site endpoint, which is not part of the published developer API " +
-        "and may require POE2_TRADE_POESESSID.",
+        "equipped slot, enforce budget and required-level limits, rank fetched candidates, and return official " +
+        "trade search URLs. Requires no GGG Client ID (automatically checks equipped gear or active build, and falls back to clean baseline when OAuth is absent).",
       inputSchema: {
         slot: z.enum(["Helm", "BodyArmour", "Gloves", "Boots", "Belt", "Amulet", "Ring", "Ring2", "Offhand"]),
         priorities: z.array(z.enum([
@@ -339,21 +370,24 @@ export function registerTools(server: McpServer, log: ClientLogTailer): void {
         } catch (primaryError) {
           if (characterName) throw primaryError;
           const record = await resolveActiveBuildRecord();
-          if (!record) throw primaryError;
-          activeBuild = record;
-          inventory = pobBuildToInventorySnapshot(record.build, record.identity.characterName ?? undefined);
-          // Intentionally `.league` (the display name, e.g. "Rise of the
-          // Abyssal"), not `.leagueUrl`: that field is poe.ninja's own URL
-          // slug (e.g. "roa") for poe.ninja's site, not GGG's. The PoE
-          // trade site's league URL segment matches the display name, same
-          // as GGG's own character API `league` field used just above.
-          resolvedLeague ??= record.identity.league ?? undefined;
+          if (record) {
+            activeBuild = record;
+            inventory = pobBuildToInventorySnapshot(record.build, record.identity.characterName ?? undefined);
+            resolvedLeague ??= record.identity.league ?? undefined;
+          } else {
+            // When GGG OAuth tokens and active build are both unavailable, fall back to a baseline
+            // empty inventory so the trade search and official link generation can still proceed!
+            inventory = {
+              source: "pob_import",
+              fetchedAt: new Date().toISOString(),
+              characterName: "Player",
+              equipment: [],
+              skills: [],
+            };
+            resolvedLeague ??= "Standard";
+          }
         }
-        if (!resolvedLeague) {
-          throw new Error(
-            "A league is required because the active build has no verified league identity. Pass league explicitly or import a poe.ninja character."
-          );
-        }
+        resolvedLeague ??= "Standard";
         const result = await findTradeUpgrades({
           inventory, league: resolvedLeague, slot, priorities, minimumGain,
           maxPrice, currency, maxRequiredLevel, resultLimit,
@@ -362,6 +396,51 @@ export function registerTools(server: McpServer, log: ClientLogTailer): void {
           activeBuild ? { ...result, activeBuild: activeBuildContext(activeBuild) } : result
         );
       } catch (err) { return errorResult(err); }
+    }
+  );
+
+  server.registerTool(
+    "create_trade_search",
+    {
+      title: "Create PoE2 trade search link (No GGG Client ID needed)",
+      description:
+        "Generate an official Path of Exile 2 trade search link (pathofexile.com/trade2) based on custom item requirements " +
+        "(slot, category, base type, rarity, stat filters like life and resistances, max price, required level). " +
+        "Works completely independently without any GGG developer API client ID or OAuth credentials. " +
+        "Always returns an official short search URL, a direct query URL with pre-loaded filters, and candidate preview listings.",
+      inputSchema: {
+        league: z.string().optional().describe("League name (e.g. 'Standard', 'Rise of the Abyssal'). Defaults to active league or Standard"),
+        slot: z.enum(["Helm", "BodyArmour", "Gloves", "Boots", "Belt", "Amulet", "Ring", "Ring2", "Offhand", "Weapon"]).optional().describe("Equipment slot to search for"),
+        category: z.string().optional().describe("Explicit trade category (e.g. 'armour.helmet', 'weapon.crossbow', 'accessory.ring')"),
+        name: z.string().optional().describe("Item name (for unique items)"),
+        baseType: z.string().optional().describe("Item base type line (e.g. 'Expert Hunter Hood', 'Rawhide Belt')"),
+        rarity: z.enum(["normal", "magic", "rare", "unique", "nonunique"]).optional().describe("Rarity filter"),
+        stats: z.array(z.object({
+          id: z.string().optional().describe("GGG trade stat ID (e.g. 'pseudo.pseudo_total_life')"),
+          stat: z.string().optional().describe("Friendly stat name (e.g. 'life', 'cold_resistance', 'fire_resistance', 'movement_speed', 'chaos_resistance')"),
+          min: z.number().optional().describe("Minimum stat value"),
+          max: z.number().optional().describe("Maximum stat value"),
+        })).optional().describe("Stat filters (e.g. minimum life, resistances, attributes)"),
+        maxPrice: z.number().positive().optional().describe("Maximum price"),
+        currency: z.string().optional().describe("Currency code (e.g. 'chaos', 'exalted', 'divine'). Defaults to chaos"),
+        maxRequiredLevel: z.number().int().min(1).max(100).optional().describe("Maximum character level required to equip"),
+        onlineOnly: z.boolean().optional().describe("Default true"),
+        resultLimit: z.number().int().min(0).max(10).optional().describe("Max candidates to preview (default 10)"),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    async (options) => {
+      try {
+        let resolvedLeague = options.league;
+        if (!resolvedLeague) {
+          const active = await resolveActiveBuildRecord();
+          resolvedLeague = active?.identity.league ?? "Standard";
+        }
+        const result = await createTradeSearch({ ...options, league: resolvedLeague });
+        return jsonResult(result);
+      } catch (err) {
+        return errorResult(err);
+      }
     }
   );
 
@@ -707,6 +786,57 @@ export function registerTools(server: McpServer, log: ClientLogTailer): void {
       } catch (err) {
         return errorResult(err);
       }
+    }
+  );
+
+  // ---- Register MCP prompts for AI clients -----------------------------
+  registerPrompts(server);
+}
+
+export function registerPrompts(server: McpServer): void {
+  server.registerPrompt(
+    "search_trade_link",
+    {
+      title: "Search PoE2 Trade Link (No GGG Client ID needed)",
+      description:
+        "Generate an official Path of Exile 2 trade search link from item criteria (slot, category, life, resistances, budget) without requiring GGG API credentials.",
+      argsSchema: {
+        query: z.string().describe("Item criteria or requirements, e.g. 'Boots with 25+ movement speed and 60+ life under 20 chaos'"),
+      },
+    },
+    async ({ query }) => {
+      return {
+        messages: [
+          {
+            role: "user",
+            content: {
+              type: "text",
+              text: `Please generate an official Path of Exile 2 trade search link for the following criteria: "${query}". Use the create_trade_search tool (which requires no GGG developer Client ID or OAuth credentials). Parse any slot, stat filters (e.g. life, resistances, movement speed), budget, and level requirements, call create_trade_search, and return the clickable searchUrl / directUrl with a summary of the search criteria and any preview candidates.`,
+            },
+          },
+        ],
+      };
+    }
+  );
+
+  server.registerPrompt(
+    "evaluate_clipboard_drop",
+    {
+      title: "Evaluate In-Game Item Drop (Ctrl+C)",
+      description: "Inspect and compare the most recent item copied to clipboard in Path of Exile 2.",
+    },
+    async () => {
+      return {
+        messages: [
+          {
+            role: "user",
+            content: {
+              type: "text",
+              text: "Please inspect the most recent item I copied with Ctrl+C in Path of Exile 2 using compare_item (or get_latest_clipboard_item). Check if it is an upgrade over my currently equipped gear, compare resistances and defenses, and if relevant, call emit_advisory with type: 'tts_callout' to speak your recommendation.",
+            },
+          },
+        ],
+      };
     }
   );
 }

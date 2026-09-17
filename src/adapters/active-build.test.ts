@@ -277,11 +277,15 @@ test("automatic selection re-evaluates instead of sticking to a stale auto-picke
 test("automatic poe.ninja selection switches when the character's league changes", async () => {
   const previousConfig = process.env.POE2_MCP_CONFIG_DIR;
   const previousAccount = process.env.POE2_ACCOUNT_NAME;
+  const previousPob = process.env.POE2_POB_BUILDS_PATH;
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), "poe2-mcp-active-league-switch-test-"));
   const config = path.join(parent, "config");
+  const emptyPob = path.join(parent, "empty-pob");
   fs.mkdirSync(config);
+  fs.mkdirSync(emptyPob);
   process.env.POE2_MCP_CONFIG_DIR = config;
   process.env.POE2_ACCOUNT_NAME = "acc";
+  process.env.POE2_POB_BUILDS_PATH = emptyPob;
 
   let currentLeagueUrl = "standard";
   const originalFetch = globalThis.fetch;
@@ -315,6 +319,8 @@ test("automatic poe.ninja selection switches when the character's league changes
     else process.env.POE2_ACCOUNT_NAME = previousAccount;
     if (previousConfig === undefined) delete process.env.POE2_MCP_CONFIG_DIR;
     else process.env.POE2_MCP_CONFIG_DIR = previousConfig;
+    if (previousPob === undefined) delete process.env.POE2_POB_BUILDS_PATH;
+    else process.env.POE2_POB_BUILDS_PATH = previousPob;
   }
 });
 

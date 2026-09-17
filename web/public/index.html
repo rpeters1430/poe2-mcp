@@ -9,10 +9,22 @@
 <body>
   <header>
     <h1>PoE2 MCP Dashboard</h1>
-    <div id="ws-status" class="badge badge-off">clipboard link: connecting&hellip;</div>
+    <div class="header-badges">
+      <div id="server-status-badge" class="badge badge-accent">server: ready</div>
+      <div id="ws-status" class="badge badge-off">clipboard link: connecting&hellip;</div>
+    </div>
   </header>
 
+  <div id="toast-container"></div>
+
   <main>
+    <section class="status-bar" id="server-status-bar">
+      <div class="status-pill">Account: <strong id="status-account">–</strong></div>
+      <div class="status-pill">Active Build: <strong id="status-build">–</strong></div>
+      <div class="status-pill">Current Area: <strong id="status-area">–</strong></div>
+      <div class="status-pill">Session: <strong id="status-session">–</strong></div>
+    </section>
+
     <section class="panel" id="panel-character">
       <h2>Character</h2>
       <div class="row">
@@ -45,6 +57,7 @@
         (<code>npm run watch-clipboard</code>) and it will appear here automatically.
         You can also paste manually.
       </p>
+      <div id="latest-item-card" class="recommendation-box" style="display:none;"></div>
       <textarea id="item-text" rows="8" placeholder="Paste PoE2 item text here&hellip;"></textarea>
       <div class="row">
         <input id="slot-input" type="text" placeholder="Slot override (optional, e.g. Ring2)" />
