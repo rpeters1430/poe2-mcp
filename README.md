@@ -29,57 +29,74 @@ protocol spec and the reasoning behind its design, especially the
   GGG's API doesn't provide these; only the memory-reading route above
   would, with everything that implies.
 
-## Setup
+## Setup Options
 
-### 1. Install and build
+You can run `poe2-mcp-server` in two ways:
+1. **Zero-Config Mode (Recommended — No GGG Developer Account Needed)**: Uses your public PoE account name on **poe.ninja**, **Path of Building 2** share codes/XML, local `Client.txt` tailing, and native **Ctrl+C** item copying.
+2. **GGG Developer OAuth Mode (Optional)**: Uses official GGG Developer API credentials.
 
+---
+
+### Method A: Zero-Config Mode (No GGG Account Setup Required)
+
+#### 1. Install and build
 ```sh
 npm install
 npm run build
 ```
 
-### 2. Register a GGG API application
-
-1. Go to <https://www.pathofexile.com/developer> and register a new
-   application.
-2. Register it as a **public client** (no client secret) using **PKCE**.
-3. Set its redirect URI to `http://127.0.0.1:8730/callback` (or pick a
-   different port and set `POE2_REDIRECT_PORT` to match everywhere below).
-4. Note the client ID it gives you.
-
-### 3. Authorize the app against your account
-
+#### 2. Set your account name (optional, or configure via Web Dashboard)
 ```sh
-export POE2_GGG_CLIENT_ID="the-client-id-from-step-2"
-export POE2_CONTACT_EMAIL="you@example.com"   # GGG requires a contact in the User-Agent
+export POE2_ACCOUNT_NAME="YourAccount-1234"
+```
+*(You can also set this or paste a poe.ninja URL / PoB share code directly in the Web Dashboard at `http://localhost:8787/`!)*
+
+#### 3. Run with Docker (Recommended) or Node
+Create a `.env` file (see `.env.example`):
+```ini
+POE2_ACCOUNT_NAME=YourAccount-1234
+POE2_CONFIG_DIR_HOST=C:\Users\you\.config\poe2-mcp-server
+POE2_CLIENT_LOG_DIR_HOST=C:\Program Files (x86)\Steam\steamapps\common\Path of Exile 2\logs
+POE2_POB_BUILDS_DIR_HOST=C:\Users\you\Documents\Path of Building (PoE2)\Builds
+POE2_SERVE_PORT=8787
+```
+Then start the container:
+```sh
+docker compose up -d
+```
+Or start directly with Node:
+```sh
+npm run serve
+```
+
+#### 4. Start the Windows Ctrl+C Clipboard Watcher (While Gaming)
+In a separate terminal on your gaming PC:
+```sh
+npm run watch-clipboard
+```
+
+---
+
+### Method B: GGG Developer OAuth (Optional)
+
+If you prefer using GGG's official developer API:
+1. Register a public client app at <https://www.pathofexile.com/developer> with redirect URI `http://127.0.0.1:8730/callback`.
+2. Authorize your account:
+```sh
+export POE2_GGG_CLIENT_ID="your-client-id"
+export POE2_CONTACT_EMAIL="you@example.com"
 npm run auth
 ```
+This opens the GGG consent URL and saves tokens to `~/.config/poe2-mcp-server/tokens.json`.
 
-This opens a consent URL (visit it in a browser, log in, approve), catches
-the redirect locally, and stores an access/refresh token pair under
-`~/.config/poe2-mcp-server/tokens.json` (mode `0600`, never written to the
-project directory). The refresh token is valid 90 days per GGG's docs; after
-that, run `npm run auth` again.
+---
 
-### 4. Point it at your Client.txt (optional — it tries to auto-detect first)
+### Client.txt Path Resolution (Auto-Detected)
 
-The server searches common Steam/Standalone/Epic install locations for your
-platform on startup (see `src/config.ts`). If it doesn't find yours —
-including if you're on Linux under Proton somewhere non-standard — set it
-explicitly:
-
+The server automatically scans default Steam, Standalone, and Epic install locations for `Path of Exile 2/logs/Client.txt`. To override manually:
 ```sh
-export POE2_CLIENT_LOG_PATH="/path/to/Path of Exile 2/logs/Client.txt"
+export POE2_CLIENT_LOG_PATH="C:\Program Files (x86)\Steam\steamapps\common\Path of Exile 2\logs\Client.txt"
 ```
-
-### 5. Run it standalone once, to sanity-check
-
-```sh
-POE2_GGG_CLIENT_ID=... POE2_CONTACT_EMAIL=... node dist/index.js
-```
-
-You should see it print the resolved `Client.txt` path (or a warning if it
-couldn't find one) and then sit waiting for an MCP client on stdio.
 
 ### Optional: authenticated trade-site searches
 
