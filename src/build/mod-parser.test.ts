@@ -44,3 +44,18 @@ test("sumStat sums a stat across multiple parsed mods", () => {
   assert.equal(sumStat(parsed, "strength"), 10);
   assert.equal(sumStat(parsed, "maximum_mana"), 0);
 });
+
+test("parses affixes containing roll range brackets and advanced headers", () => {
+  const parsed = parseMods([
+    '{ Prefix Modifier "Glowing" (Tier: 8) — Energy Shield }',
+    "+34(31-35) to maximum Energy Shield",
+    "53(43-55)% increased Energy Shield",
+    "+20(16-20)% to Lightning Resistance",
+    "+50(50-72) to Stun Threshold",
+  ]);
+
+  assert.equal(sumStat(parsed, "maximum_energy_shield"), 34);
+  assert.equal(sumStat(parsed, "increased_energy_shield_percent"), 53);
+  assert.equal(sumStat(parsed, "lightning_resistance_percent"), 20);
+  assert.equal(sumStat(parsed, "stun_threshold"), 50);
+});

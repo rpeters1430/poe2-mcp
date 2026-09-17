@@ -3,69 +3,197 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>PoE2 MCP Dashboard</title>
+  <title>PoE2 Assistant &bull; MCP Dashboard</title>
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
-  <header>
-    <h1>PoE2 MCP Dashboard</h1>
-    <div class="header-badges">
-      <div id="server-status-badge" class="badge badge-accent">server: ready</div>
-      <div id="ws-status" class="badge badge-off">clipboard link: connecting&hellip;</div>
+  <header class="header">
+    <div class="header-brand">
+      <div class="brand-badge">PoE 2</div>
+      <div>
+        <h1 class="brand-title">Path of Exile 2 Assistant</h1>
+        <div class="brand-subtitle">Real-Time Gear Comparator &bull; Trade Engine &bull; Session Monitor</div>
+      </div>
+    </div>
+    <div class="header-status">
+      <div id="ws-status" class="status-badge badge-connecting">
+        <span class="pulse-dot"></span>
+        <span class="badge-label">Clipboard Watcher: Connecting&hellip;</span>
+      </div>
+      <div id="server-status-badge" class="status-badge badge-ready">
+        <span class="static-dot"></span>
+        <span class="badge-label">Server: Ready</span>
+      </div>
     </div>
   </header>
 
   <div id="toast-container"></div>
 
-  <main>
-    <section class="status-bar" id="server-status-bar">
-      <div class="status-pill">Account: <strong id="status-account">–</strong></div>
-      <div class="status-pill">Active Build: <strong id="status-build">–</strong></div>
-      <div class="status-pill">Current Area: <strong id="status-area">–</strong></div>
-      <div class="status-pill">Session: <strong id="status-session">–</strong></div>
+  <main class="dashboard-grid">
+    <!-- Hero HUD Ribbon -->
+    <section class="hud-ribbon" id="server-status-bar">
+      <div class="hud-card">
+        <div class="hud-label">Active Character</div>
+        <div class="hud-value" id="status-character">–</div>
+        <div class="hud-sub" id="status-build">–</div>
+      </div>
+      <div class="hud-card">
+        <div class="hud-label">Current Zone</div>
+        <div class="hud-value hud-zone" id="status-area">In Hideout / Town</div>
+        <div class="hud-sub" id="status-zone-time">–</div>
+      </div>
+      <div class="hud-card">
+        <div class="hud-label">Session Progress</div>
+        <div class="hud-value" id="status-session">–</div>
+        <div class="hud-sub" id="status-deaths-levels">–</div>
+      </div>
+      <div class="hud-card hud-card-interactive" id="latest-drop-hud">
+        <div class="hud-label">Latest Ctrl+C Item</div>
+        <div class="hud-value hud-item-name" id="status-clipboard-name">None detected yet</div>
+        <div class="hud-sub" id="status-clipboard-meta">Press Ctrl+C in-game</div>
+      </div>
     </section>
 
+    <!-- Compare Section (Full Width Hero) -->
+    <section class="panel panel-highlight" id="panel-compare">
+      <div class="panel-header">
+        <div class="panel-title-group">
+          <h2>⚔️ In-Game Gear Comparison</h2>
+          <span class="panel-tag">Auto-Updates on Ctrl+C</span>
+        </div>
+        <div class="panel-actions">
+          <button id="clear-compare-btn" class="btn btn-secondary" title="Clear current comparison">✕ Clear</button>
+          <button id="compare-btn" class="btn btn-primary">Compare Item</button>
+        </div>
+      </div>
+
+      <div id="drop-detected-banner" class="drop-banner" style="display:none;">
+        <span class="sparkle">✨</span>
+        <span id="drop-banner-text">New drop copied! Replacing comparison...</span>
+      </div>
+
+      <!-- Raw text toggle & input row -->
+      <div class="compare-input-section">
+        <div class="row compare-controls">
+          <input id="slot-input" type="text" placeholder="Slot override (optional: Helm, BodyArmour, Boots, Ring, Ring2, Weapon...)" />
+          <button id="toggle-raw-btn" class="btn btn-sm btn-ghost">Show Raw Text</button>
+        </div>
+        <div id="raw-textarea-wrap" style="display:none;">
+          <textarea id="item-text" rows="5" placeholder="Item text copied from Path of Exile 2 (Ctrl+C) will automatically appear here..."></textarea>
+        </div>
+      </div>
+
+      <!-- Live Comparison Output -->
+      <div id="compare-result" class="compare-container">
+        <div class="empty-state">
+          <div class="empty-icon">🛡️</div>
+          <h3>No Item Compared Yet</h3>
+          <p>Hover over any item in Path of Exile 2 and press <kbd>Ctrl+C</kbd>.</p>
+          <p class="hint">The clipboard watcher automatically captures the item, compares it with your currently equipped gear, and replaces this view instantly.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Quick Trade Search Panel -->
+    <section class="panel" id="panel-trade">
+      <div class="panel-header">
+        <div class="panel-title-group">
+          <h2>🔍 Official Trade Search Generator</h2>
+          <span class="panel-tag">No GGG Client ID Needed</span>
+        </div>
+      </div>
+      <p class="hint">Generate instant clickable links for official Path of Exile 2 trade searches with pre-loaded stat filters.</p>
+      <div class="trade-form">
+        <div class="form-row">
+          <div class="form-group">
+            <label for="trade-slot">Slot / Category</label>
+            <select id="trade-slot">
+              <option value="Boots">Boots (armour.boots)</option>
+              <option value="Helm">Helmet (armour.helmet)</option>
+              <option value="BodyArmour">Body Armour (armour.chest)</option>
+              <option value="Gloves">Gloves (armour.gloves)</option>
+              <option value="Belt">Belt (accessory.belt)</option>
+              <option value="Amulet">Amulet (accessory.amulet)</option>
+              <option value="Ring">Ring (accessory.ring)</option>
+              <option value="Offhand">Offhand (Shield / Focus / Quiver)</option>
+              <option value="Weapon">Weapon</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="trade-budget">Max Budget</label>
+            <div class="budget-input-row">
+              <input id="trade-budget" type="number" min="1" max="10000" value="20" />
+              <select id="trade-currency">
+                <option value="chaos">Chaos</option>
+                <option value="exalted">Exalted</option>
+                <option value="divine">Divine</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="trade-req-lvl">Max Req Level</label>
+            <input id="trade-req-lvl" type="number" min="1" max="100" placeholder="Optional" />
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Desired Stat Filters</label>
+          <div class="trade-stat-chips" id="trade-stat-chips">
+            <label class="chip-checkbox"><input type="checkbox" value="maximum_life" checked /> +Life</label>
+            <label class="chip-checkbox"><input type="checkbox" value="cold_resistance" checked /> +Cold Res</label>
+            <label class="chip-checkbox"><input type="checkbox" value="fire_resistance" /> +Fire Res</label>
+            <label class="chip-checkbox"><input type="checkbox" value="lightning_resistance" /> +Lightning Res</label>
+            <label class="chip-checkbox"><input type="checkbox" value="chaos_resistance" /> +Chaos Res</label>
+            <label class="chip-checkbox"><input type="checkbox" value="movement_speed" checked /> +Movement Speed</label>
+            <label class="chip-checkbox"><input type="checkbox" value="energy_shield" /> +Energy Shield</label>
+            <label class="chip-checkbox"><input type="checkbox" value="armour" /> +Armour</label>
+          </div>
+        </div>
+
+        <div class="trade-actions">
+          <button id="btn-create-trade-search" class="btn btn-primary">Generate Trade Link</button>
+        </div>
+
+        <div id="trade-search-result" style="display:none;" class="trade-result-box"></div>
+      </div>
+    </section>
+
+    <!-- Character & Defenses Panel -->
     <section class="panel" id="panel-character">
-      <h2>Character</h2>
-      <div class="row">
-        <input id="character-input" type="text" placeholder="Character name (blank = active character)" />
-        <button id="set-active-btn">Set active</button>
-        <button id="refresh-btn">Refresh</button>
+      <div class="panel-header">
+        <h2>👤 Character & Loadout</h2>
+        <button id="refresh-btn" class="btn btn-secondary btn-sm">↻ Refresh</button>
       </div>
-      <div id="character-summary" class="summary">Loading&hellip;</div>
-      <div class="grid">
+      <div class="row">
+        <input id="character-input" type="text" placeholder="Character name (leave blank for active)" />
+        <button id="set-active-btn" class="btn btn-secondary btn-sm">Pin Active</button>
+      </div>
+      <div id="character-summary" class="character-card">Loading&hellip;</div>
+      <div class="grid-2col">
         <div>
-          <h3>Defenses</h3>
-          <div id="defenses-summary" class="summary">&ndash;</div>
+          <h3>Equipped Defenses</h3>
+          <div id="defenses-summary" class="summary-box">&ndash;</div>
         </div>
         <div>
-          <h3>Offense</h3>
-          <div id="offense-summary" class="summary">&ndash;</div>
+          <h3>Offense Stats</h3>
+          <div id="offense-summary" class="summary-box">&ndash;</div>
         </div>
       </div>
     </section>
 
+    <!-- Recent Events Panel -->
     <section class="panel" id="panel-events">
-      <h2>Recent events</h2>
-      <ul id="events-list" class="events"></ul>
-    </section>
-
-    <section class="panel" id="panel-compare">
-      <h2>Compare item</h2>
-      <p class="hint">
-        Copy an item in-game (Ctrl+C) on the desktop running the clipboard watcher
-        (<code>npm run watch-clipboard</code>) and it will appear here automatically.
-        You can also paste manually.
-      </p>
-      <div id="latest-item-card" class="recommendation-box" style="display:none;"></div>
-      <textarea id="item-text" rows="8" placeholder="Paste PoE2 item text here&hellip;"></textarea>
-      <div class="row">
-        <input id="slot-input" type="text" placeholder="Slot override (optional, e.g. Ring2)" />
-        <button id="compare-btn">Compare</button>
+      <div class="panel-header">
+        <h2>📜 Recent Game Events</h2>
+        <span class="panel-tag" id="events-count">0 events</span>
       </div>
-      <div id="compare-result"></div>
+      <ul id="events-list" class="events-feed"></ul>
     </section>
   </main>
+
+  <footer class="footer">
+    <div>Path of Exile 2 MCP Server &bull; Port 8787 &bull; Local & Remote LAN Ready</div>
+  </footer>
 
   <script src="/app.js"></script>
 </body>

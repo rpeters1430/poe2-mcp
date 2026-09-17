@@ -118,11 +118,29 @@ const PATTERNS: ModPattern[] = [
     regex: /^(-?\d+)% increased (Physical|Fire|Cold|Lightning|Chaos|Elemental) Damage$/i,
     extract: (m) => [{ stat: `increased_${m[2].toLowerCase()}_damage_percent`, value: Number(m[1]) }],
   },
+  {
+    regex: /^\+(-?\d+) to Stun Threshold$/i,
+    extract: (m) => [{ stat: "stun_threshold", value: Number(m[1]) }],
+  },
+  {
+    regex: /^(-?\d+(?:\.\d+)?) Life Regeneration per second$/i,
+    extract: (m) => [{ stat: "life_regeneration_per_second", value: Number(m[1]) }],
+  },
+  {
+    regex: /^\+(-?\d+) to maximum Life and Mana$/i,
+    extract: (m) => [
+      { stat: "maximum_life", value: Number(m[1]) },
+      { stat: "maximum_mana", value: Number(m[1]) },
+    ],
+  },
 ];
 
 export function parseMods(mods: string[]): ParsedMod[] {
   return mods.map((raw) => {
-    const text = raw.trim();
+    if (raw.startsWith("{") && raw.endsWith("}")) {
+      return { raw, matches: [] };
+    }
+    const text = raw.replace(/(\d+(?:\.\d+)?)\s*\([0-9.\s-]+\)/g, "$1").trim();
     for (const pattern of PATTERNS) {
       const m = text.match(pattern.regex);
       if (m) return { raw, matches: pattern.extract(m) };

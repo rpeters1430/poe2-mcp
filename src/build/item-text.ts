@@ -107,7 +107,13 @@ export function parseItemText(clipboard: string): ParsedItemText {
         properties.push({ name: propMatch[1].trim(), values: [[stripAugmented(propMatch[2]), 0]] });
         continue;
       }
-      mods.push(line);
+      // Skip advanced mod descriptor headers like { Prefix Modifier "Resolute" (Tier: 6) — Energy Shield }
+      if (line.startsWith("{") && line.endsWith("}")) {
+        continue;
+      }
+      // Strip roll bracket annotations like 53(43-55)% -> 53% or +34(31-35) -> +34
+      const cleanedMod = line.replace(/(\d+(?:\.\d+)?)\s*\([0-9.\s-]+\)/g, "$1").trim();
+      mods.push(cleanedMod);
     }
   }
 
