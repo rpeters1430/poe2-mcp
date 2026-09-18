@@ -40,13 +40,16 @@ export function parseNinjaProfileUrl(
   url: string
 ): { account: string; league: string; character: string } | null {
   const match = url.match(
-    /(?:https?:\/\/)?(?:www\.)?poe\.ninja\/(?:poe2|poe1)\/profile\/([^\/]+)\/([^\/]+)\/character\/([^\/\?#]+)/i
+    /(?:https?:\/\/)?(?:www\.)?poe\.ninja\/(poe2|poe1)\/profile\/([^\/]+)\/([^\/]+)\/character\/([^\/\?#]+)/i
   );
-  if (!match) return null;
+  // Only poe2 profiles are supported -- a poe1 URL previously matched here
+  // too and silently fell through to poe2-only downstream calls instead of
+  // failing with a clear "invalid URL" error.
+  if (!match || match[1].toLowerCase() !== "poe2") return null;
   return {
-    account: match[1],
-    league: match[2],
-    character: match[3],
+    account: match[2],
+    league: match[3],
+    character: match[4],
   };
 }
 

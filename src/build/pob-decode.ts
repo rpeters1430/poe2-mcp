@@ -150,13 +150,22 @@ export async function resolvePobXml(input: string, depth = 0): Promise<string> {
 
   // 4. poe.ninja profile URL (e.g. https://poe.ninja/poe2/profile/account/league/character/name)
   const ninjaMatch = trimmed.match(
-    /(?:https?:\/\/)?(?:www\.)?poe\.ninja\/(?:poe2|poe1)\/profile\/([^\/]+)\/([^\/]+)\/character\/([^\/\?#]+)/i
+    /(?:https?:\/\/)?(?:www\.)?poe\.ninja\/(poe2|poe1)\/profile\/([^\/]+)\/([^\/]+)\/character\/([^\/\?#]+)/i
   );
   if (ninjaMatch) {
-    const account = ninjaMatch[1];
-    const league = ninjaMatch[2];
-    const character = ninjaMatch[3];
-    const url = `https://poe.ninja/poe2/api/profile/characters/${encodeURIComponent(account)}/${encodeURIComponent(league)}/${encodeURIComponent(character)}/model/0`;
+    const realm = ninjaMatch[1].toLowerCase();
+    // The matched realm is also fed into the fetch URL below rather than a
+    // hardcoded "poe2" -- previously a pasted poe1 profile URL silently
+    // queried the poe2 endpoint anyway instead of erroring clearly.
+    if (realm !== "poe2") {
+      throw new Error(
+        `This server only supports Path of Exile 2 characters; the pasted URL is a poe.ninja "${realm}" profile.`
+      );
+    }
+    const account = ninjaMatch[2];
+    const league = ninjaMatch[3];
+    const character = ninjaMatch[4];
+    const url = `https://poe.ninja/${realm}/api/profile/characters/${encodeURIComponent(account)}/${encodeURIComponent(league)}/${encodeURIComponent(character)}/model/0`;
     try {
       const data = JSON.parse(await fetchTextLimited(url)) as any;
       if (!data.charModel?.pathOfBuildingExport) {

@@ -17,11 +17,15 @@ not something to make silently.
 ## Commands
 
 ```sh
-npm run build   # tsc -p tsconfig.json -> dist/
-npm run dev     # tsx src/index.ts (run the server directly from TS, no build step)
-npm run auth    # tsx src/auth.ts  (one-time interactive GGG OAuth/PKCE flow)
-npm start       # node dist/index.js (run the built server)
-npm test        # node --import tsx --test src/adapters/*.test.ts src/build/*.test.ts (node:test, no build step)
+npm run build               # tsc -p tsconfig.json -> dist/
+npm run dev                 # tsx src/index.ts (stdio server, run from TS, no build step)
+npm run auth                # tsx src/auth.ts  (one-time interactive GGG OAuth/PKCE flow)
+npm start                   # node dist/index.js (run the built stdio server)
+npm run serve               # tsx src/serve.ts (LAN-reachable HTTP: MCP + web dashboard + WS + REST, no build step)
+npm run start:serve         # node dist/serve.js (built equivalent of `serve`)
+npm run watch-clipboard     # tsx src/clipboard-watcher.ts (Windows-only Ctrl+C watcher, run natively, never in Docker)
+npm run start:watch-clipboard  # node dist/clipboard-watcher.js
+npm test                    # node --import tsx --test src/adapters/*.test.ts src/build/*.test.ts src/tools/*.test.ts
 ```
 
 Tests are colocated as `src/**/*.test.ts` next to the module they cover (e.g.
@@ -29,13 +33,21 @@ Tests are colocated as `src/**/*.test.ts` next to the module they cover (e.g.
 rather than a new dependency, and are excluded from `tsc`'s `include` so they
 never land in `dist/`. Coverage covers the pure functions under `src/build/`
 (mod/property/item-text parsing, defenses/offense aggregation, comparison, PoB
-decode/parse) plus filesystem-backed active-build lifecycle tests
-(`active-build.test.ts`, using a temp config/builds dir) and mocked-network
-trade-search tests (`trade.test.ts`, stubbing `globalThis.fetch`) — the
-client-log tailer and the GGG API/OAuth adapters still have no tests. There is
-no lint config in this repo currently; CI (`.github/workflows/ci.yml`) runs
-build/test/audit/pack on Node 20/22/24. There's also no `--watch` script; use
-`npm run dev` for iteration.
+decode/parse), filesystem-backed active-build lifecycle tests
+(`active-build.test.ts`, using a temp config/builds dir), mocked-network
+trade-search tests (`trade.test.ts`, stubbing `globalThis.fetch`), and the
+`src/tools/handlers.ts` helpers (`handlers.test.ts`) — the client-log tailer,
+`src/web/`, and the GGG API/OAuth adapters still have no tests. To run a
+single test file directly: `node --import tsx --test src/build/mod-parser.test.ts`.
+There is no lint config in this repo currently; CI (`.github/workflows/ci.yml`)
+runs build/test/audit/pack on Node 20/22/24. There's also no `--watch` script;
+use `npm run dev` (or `npm run serve`) for iteration.
+
+`index.ts` (stdio) and `serve.ts` (HTTP) are two separate entrypoints/binaries
+over the *same* tool surface — both call `registerTools` from
+`src/tools/register.ts` against a per-connection `McpServer`. Don't add
+tool-registration logic to one and not the other; add it to `register.ts`/
+`handlers.ts` and both entrypoints pick it up.
 
 To sanity-check the server standalone against stdio (it just waits for an MCP
 client to connect and prints the resolved `Client.txt` path to stderr):
@@ -109,7 +121,21 @@ tool to its adapter and the one write tool (`emit_advisory`) to
 **`src/advisory/dispatch.ts`**. Every tool result is plain JSON text
 (`jsonResult`/`errorResult` helpers) — there are no MCP resources or
 subscriptions in this server, by design (see PROTOCOL.md "Interaction model"
-for why: pull-only, nothing fires without the AI asking for it).
+for why: pull-only, nothing fires without the AI asking for it). Shared
+resolution logic used by multiple tool handlers (active character/build
+lookup, etc.) lives in **`src/tools/handlers.ts`** as plain exported
+functions (`activeBuildContext`, `resolveCharacterName`, ...) so it's
+unit-testable without spinning up an `McpServer` — `register.ts` imports it
+as `import * as handlers from "./handlers.js"`. Put new pure resolution/
+formatting logic there, not inline in a `registerTool` callback, if it's
+worth a test. **`src/instructions.ts`** holds `SERVER_INSTRUCTIONS`, the
+system-prompt-style text handed to connecting AI clients at MCP
+initialization (which tool to call for which kind of user request, e.g.
+"trade link" → `create_trade_search`, Ctrl+C workflow →
+`compare_item`/`get_latest_clipboard_item`) — both `index.ts` and `serve.ts`
+pass it into their `McpServer` constructor; update it when tool behavior or
+the recommended calling convention changes, since it's the AI's only
+built-in guidance beyond each tool's own `description`.
 
 **`src/advisory/dispatch.ts`** fulfills `emit_advisory` actions. Every branch
 is a side channel to the *player*, never the game process: append to a local
@@ -248,6 +274,62 @@ surface rather than needing separate tools per source.
 - Call **`compare_item`** (with NO arguments) or **`get_latest_clipboard_item`** to analyze the drop against equipped gear.
   - Dual-ring slots: automatically evaluates both Ring 1 and Ring 2, displays stat deltas, and recommends which ring to replace.
 - Use **`emit_advisory`** with `type: "tts_callout"` to speak recommendations through desktop audio so the player hears advice without alt-tabbing.
+
+## Remote/LAN mode, web dashboard, and the clipboard watcher
+
+`src/index.ts` (stdio) is the only entrypoint described above; there is a
+second one, **`src/serve.ts`**, for the "game + server on a desktop, AI CLI
+on a laptop over LAN/Wi-Fi/Tailscale" setup documented in README.md. It's a
+plain `node:http` server (no Express) that on the same port multiplexes:
+  - `/mcp` — Streamable HTTP MCP transport (`StreamableHTTPServerTransport`
+    from the SDK), one `McpServer`/transport pair per `mcp-session-id`,
+    tracked in an in-memory `Map`.
+  - `/` and other static paths — serves `web/public/` (the dashboard's
+    static HTML/JS/CSS), via `serveStatic`, which normalizes and
+    prefix-checks the resolved path against `PUBLIC_DIR` before reading —
+    keep that check if you touch `serveStatic`, it's the path-traversal
+    guard.
+  - `/api/*` — REST endpoints, handled by **`src/web/api.ts`**
+    (`handleApi`), e.g. `POST /api/clipboard-item`, `POST /api/trade/search`,
+    `GET /api/status`.
+  - `/ws` (via the HTTP server's `upgrade` event) — a WebSocket link handled
+    by **`src/web/ws.ts`** (`handleUpgrade`/`broadcastLogEvent`), pushing
+    live `ClientLogTailer` events (area changes, deaths) and `emit_advisory`
+    actions (so a connected clipboard watcher can play `tts_callout`s) to
+    the dashboard and any other connected client in real time.
+
+  `/mcp` and `/api/*` are gated by **`src/web/auth.ts`**'s `checkWebToken` —
+  if `POE2_WEB_TOKEN` is set, it's required (as an `X-POE2-Token` header or
+  `?token=` query param); `serve.ts` logs a loud warning on startup if it's
+  unset, since anything on the LAN can otherwise reach these endpoints.
+  Static files and the WS upgrade are intentionally on the same origin/port
+  as `/mcp`/`/api` — there's no separate frontend server.
+
+  `docker-compose.yml` / `Dockerfile` package `serve.ts` for the "run this on
+  the gaming desktop, reachable from a laptop" deployment; env vars for host
+  paths (`POE2_CONFIG_DIR_HOST`, `POE2_CLIENT_LOG_DIR_HOST`,
+  `POE2_POB_BUILDS_DIR_HOST`) get bind-mounted in. The clipboard watcher
+  below is explicitly excluded from the container (see next paragraph).
+
+**`src/clipboard-watcher.ts`** is a standalone script, run natively on the
+Windows gaming desktop only (checks `os.platform() !== "win32"` and exits
+otherwise) — **never inside Docker**, since a container can't see the host's
+Windows clipboard. It spawns a persistent STA-mode PowerShell child process
+that polls `[System.Windows.Forms.Clipboard]` every 200ms (chosen for near-
+zero CPU/no game-frame impact) and, on a line starting `Item Class:`,
+base64-encodes the item text back over the child's stdout. The parent
+process POSTs that text to `${POE2_SERVE_URL}/api/clipboard-item` on the
+`serve.ts` instance (so `npm run serve`/Docker must already be running) and
+also opens a WebSocket to `/ws` so that a `tts_callout` advisory triggered by
+the AI gets spoken locally via `System.Speech.Synthesis` — this is the "AI
+talks back to you while you play" leg of the loop, separate from
+`src/advisory/dispatch.ts`'s own OS-notification/TTS paths, which run
+wherever the *MCP server process* lives rather than wherever the *player*
+is. `POST /api/clipboard-item` lands in **`src/adapters/clipboard-store.ts`**
+(`saveLatestClipboardItem`), which parses the item via `item-text.ts`'s
+`parseItemText` and persists it both in-memory and to
+`configDir()/latest-clipboard-item.json` — `get_latest_clipboard_item`/
+`compare_item` read from there when no item is passed explicitly.
 
 ## Adding a new tool
 

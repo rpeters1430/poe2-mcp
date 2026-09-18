@@ -33,12 +33,27 @@ async function runCommand(cmd: string, args: string[]): Promise<void> {
   });
 }
 
+/**
+ * Escapes a string for embedding inside an AppleScript double-quoted string
+ * literal. Backslashes MUST be escaped before quotes -- escaping quotes
+ * first (a bug this project used to have) leaves a raw trailing backslash
+ * in front of the newly-inserted `\"`, which AppleScript then reads as an
+ * escaped backslash followed by an unescaped quote, closing the string
+ * early and letting anything after it (e.g. `& do shell script "..."`) run
+ * as a new statement. `message` here can contain untrusted third-party text
+ * an AI relayed through emit_advisory (chat/trade whispers are explicitly
+ * labeled `untrusted` by client-log.ts), so this isn't just theoretical.
+ */
+export function escapeAppleScriptString(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/[\r\n]+/g, " ");
+}
+
 async function sendDesktopNotification(title: string, body: string): Promise<void> {
   const platform = os.platform();
   if (platform === "linux") {
     await runCommand("notify-send", [title, body]);
   } else if (platform === "darwin") {
-    const script = `display notification "${body.replace(/"/g, '\\"')}" with title "${title.replace(/"/g, '\\"')}"`;
+    const script = `display notification "${escapeAppleScriptString(body)}" with title "${escapeAppleScriptString(title)}"`;
     await runCommand("osascript", ["-e", script]);
   } else if (platform === "win32") {
     // BurntToast or similar isn't guaranteed installed; msg.exe is a

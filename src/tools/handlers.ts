@@ -22,7 +22,7 @@ import { computeDefenses } from "../build/defenses.js";
 import { computeOffenseStats } from "../build/offense.js";
 import { parseItemText } from "../build/item-text.js";
 import { compareItem as compareItemCore } from "../build/compare.js";
-import { resolveAccountName, resolvePobBuildsDir } from "../config.js";
+import { resolveAccountName, resolvePobBuildsDir, saveAccountName } from "../config.js";
 import { fetchNinjaCharacters, fetchNinjaAsPobBuild, parseNinjaProfileUrl } from "../adapters/poe-ninja.js";
 import {
   resolveActiveBuildRecord,
@@ -37,7 +37,7 @@ import { parsePobXml } from "../build/pob-parser.js";
 import { resolvePobXml } from "../build/pob-decode.js";
 import { validatePobBuildFile, readPobBuildFile } from "../adapters/pob.js";
 import { getLatestClipboardItem } from "../adapters/clipboard-store.js";
-import { createTradeSearch } from "../adapters/trade.js";
+import { createTradeSearch, findTradeUpgrades, type FindTradeUpgradesOptions } from "../adapters/trade.js";
 import type { ActiveBuildRecord, GameEventType, InventorySnapshot, TradeSearchOptions } from "../types.js";
 
 export function activeBuildContext(record: ActiveBuildRecord) {
@@ -250,6 +250,8 @@ export async function importPobBuildHandler(codeOrFilePath: string, isFilePath =
       ascendClassName: parsed.ascendClassName,
       level: parsed.level,
       equipmentCount: parsed.equipment.length,
+      skillsCount: parsed.skills.length,
+      playerStatsCount: parsed.playerStats?.length ?? 0,
     },
   };
 }
@@ -263,6 +265,8 @@ export async function importPoeNinjaCharacterHandler(options: {
   let acc = options.accountName ?? resolveAccountName();
   let l = options.league;
   let char = options.characterName;
+  let identityLeague: string | undefined;
+  let sourceUpdatedAt: string | undefined;
 
   if (options.profileUrl) {
     const parsed = parseNinjaProfileUrl(options.profileUrl);
@@ -286,21 +290,36 @@ export async function importPoeNinjaCharacterHandler(options: {
       ? chars.find((c) => c.name.toLowerCase() === char!.toLowerCase())
       : chars.find((c) => c.isCurrent) ?? chars[0];
     if (!match) {
-      throw new Error(`Could not find character "${char ?? ""}" on poe.ninja for account "${acc}".`);
+      throw new Error(
+        `Character "${char ?? "current"}" not found on poe.ninja for account "${acc}". Available: ${chars
+          .map((c) => c.name)
+          .join(", ")}`
+      );
     }
     char = match.name;
     l = match.leagueUrl;
+    identityLeague = match.league;
+    sourceUpdatedAt = match.updated;
+  } else {
+    // Both were already provided -- still prefer poe.ninja's own leagueUrl
+    // slug over whatever the caller passed before fetching, since a display
+    // name like "Rise of the Abyssal" does not reliably normalize to the
+    // real slug ("roa"). Best-effort: an unreachable poe.ninja here just
+    // means the caller-provided `l` is used as-is below.
+    try {
+      const match = (await fetchNinjaCharacters(acc)).find(
+        (candidate) => candidate.name.toLowerCase() === char!.toLowerCase()
+      );
+      if (match) {
+        l = match.leagueUrl;
+        identityLeague = match.league;
+        sourceUpdatedAt = match.updated;
+      }
+    } catch {}
   }
 
   const build = await fetchNinjaAsPobBuild(acc, l, char);
-  let sourceUpdatedAt: string | undefined;
-  let displayLeague = l;
-  try {
-    const chars = await fetchNinjaCharacters(acc);
-    const match = chars.find((c) => c.name.toLowerCase() === char!.toLowerCase());
-    sourceUpdatedAt = match?.updated;
-    if (match?.league) displayLeague = match.league;
-  } catch {}
+  const displayLeague = identityLeague ?? l;
 
   const record = saveActiveBuild(build, {
     origin: "poe_ninja",
@@ -327,8 +346,86 @@ export async function importPoeNinjaCharacterHandler(options: {
       ascendClassName: build.ascendClassName,
       level: build.level,
       equipmentCount: build.equipment.length,
+      skillsCount: build.skills.length,
+      playerStatsCount: build.playerStats?.length ?? 0,
     },
   };
+}
+
+export async function setAccountNameHandler(accountName: string) {
+  try {
+    saveAccountName(accountName);
+    const chars = await fetchNinjaCharacters(accountName);
+    return {
+      message: `Account name saved as "${accountName}". Verified on poe.ninja: found ${chars.length} characters.`,
+      characters: chars,
+    };
+  } catch (err) {
+    // Still saved -- poe.ninja may just be unreachable, or the account's
+    // character tab may be private. Report the check's failure without
+    // treating the save itself as failed.
+    saveAccountName(accountName);
+    return {
+      message: `Account name saved as "${accountName}". Note: poe.ninja check returned: ${
+        err instanceof Error ? err.message : String(err)
+      }. Ensure your PoE profile character tab is set to public.`,
+    };
+  }
+}
+
+export interface FindTradeUpgradesHandlerOptions {
+  slot: FindTradeUpgradesOptions["slot"];
+  priorities: FindTradeUpgradesOptions["priorities"];
+  minimumGain?: number;
+  maxPrice: number;
+  currency: string;
+  maxRequiredLevel?: number;
+  league?: string;
+  characterName?: string;
+  resultLimit?: number;
+}
+
+export async function findTradeUpgradesHandler(options: FindTradeUpgradesHandlerOptions, log: ClientLogTailer) {
+  let inventory: InventorySnapshot;
+  let resolvedLeague = options.league;
+  let activeBuild: ActiveBuildRecord | null = null;
+  try {
+    const name = await resolveCharacterName(options.characterName, log);
+    inventory = await fetchInventorySnapshot(name);
+    if (!resolvedLeague) resolvedLeague = (await fetchCharacterState(name)).league ?? undefined;
+  } catch (primaryError) {
+    if (options.characterName) throw primaryError;
+    const record = await resolveActiveBuildRecord();
+    if (record) {
+      activeBuild = record;
+      inventory = pobBuildToInventorySnapshot(record.build, record.identity.characterName ?? undefined);
+      resolvedLeague ??= record.identity.league ?? undefined;
+    } else {
+      // When GGG OAuth tokens and active build are both unavailable, fall back to a baseline
+      // empty inventory so the trade search and official link generation can still proceed!
+      inventory = {
+        source: "pob_import",
+        fetchedAt: new Date().toISOString(),
+        characterName: "Player",
+        equipment: [],
+        skills: [],
+      };
+      resolvedLeague ??= "Standard";
+    }
+  }
+  resolvedLeague ??= "Standard";
+  const result = await findTradeUpgrades({
+    inventory,
+    league: resolvedLeague,
+    slot: options.slot,
+    priorities: options.priorities,
+    minimumGain: options.minimumGain,
+    maxPrice: options.maxPrice,
+    currency: options.currency,
+    maxRequiredLevel: options.maxRequiredLevel,
+    resultLimit: options.resultLimit,
+  });
+  return activeBuild ? { ...result, activeBuild: activeBuildContext(activeBuild) } : result;
 }
 
 export async function refreshActiveBuildHandler() {

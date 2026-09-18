@@ -17,7 +17,7 @@
     "start:serve": "node dist/serve.js",
     "watch-clipboard": "tsx src/clipboard-watcher.ts",
     "start:watch-clipboard": "node dist/clipboard-watcher.js",
-    "test": "node --import tsx --test src/adapters/*.test.ts src/build/*.test.ts src/tools/*.test.ts"
+    "test": "node --import tsx --test src/adapters/*.test.ts src/build/*.test.ts src/tools/*.test.ts src/web/*.test.ts src/advisory/*.test.ts"
   },
   "engines": {
     "node": ">=20"

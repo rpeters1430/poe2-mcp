@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 // Optional shared-secret gate for the network-facing /api, /ws, and /mcp
@@ -23,11 +24,27 @@ function providedToken(req: IncomingMessage): string | null {
   }
 }
 
+/**
+ * Constant-time string comparison so a token check reachable over LAN/
+ * Tailscale doesn't leak how many leading characters matched via response
+ * timing. `crypto.timingSafeEqual` requires equal-length buffers, so a
+ * length mismatch is checked separately -- that branch is a fast, data-
+ * independent reject (length alone isn't sensitive) rather than a timing
+ * oracle for the token's content.
+ */
+function safeTokenEquals(provided: string, expected: string): boolean {
+  const providedBuf = Buffer.from(provided, "utf8");
+  const expectedBuf = Buffer.from(expected, "utf8");
+  if (providedBuf.length !== expectedBuf.length) return false;
+  return crypto.timingSafeEqual(providedBuf, expectedBuf);
+}
+
 /** Returns true if the request is authorized. Writes a 401 and returns false otherwise. */
 export function checkWebToken(req: IncomingMessage, res: ServerResponse): boolean {
   const expected = expectedToken();
   if (!expected) return true;
-  if (providedToken(req) === expected) return true;
+  const provided = providedToken(req);
+  if (provided !== null && safeTokenEquals(provided, expected)) return true;
   res.writeHead(401, { "Content-Type": "application/json; charset=utf-8" });
   res.end(JSON.stringify({ error: "Unauthorized: missing or incorrect token (POE2_WEB_TOKEN is set)." }));
   return false;
@@ -37,5 +54,6 @@ export function checkWebToken(req: IncomingMessage, res: ServerResponse): boolea
 export function isWebTokenValid(req: IncomingMessage): boolean {
   const expected = expectedToken();
   if (!expected) return true;
-  return providedToken(req) === expected;
+  const provided = providedToken(req);
+  return provided !== null && safeTokenEquals(provided, expected);
 }

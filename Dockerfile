@@ -20,5 +20,13 @@ RUN npm ci --omit=dev
 COPY --from=build /app/dist ./dist
 COPY web ./web
 
+# Run as the image's built-in unprivileged user rather than root, in case a
+# future dependency vuln or request-handling bug is ever exploited. The
+# host directories bind-mounted at /config (read-write), /game-logs, and
+# /pob-builds (both read-only, per docker-compose.yml) must be readable --
+# and /config writable -- by this container's node user (uid 1000); adjust
+# host directory permissions if you hit EACCES after upgrading.
+USER node
+
 EXPOSE 8787
 CMD ["node", "dist/serve.js"]

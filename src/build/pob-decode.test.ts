@@ -34,6 +34,17 @@ test("resolvePobXml strips markdown code fences around raw XML", async () => {
   assert.equal(await resolvePobXml("```xml\n" + xml + "\n```"), xml);
 });
 
+// Regression test: this used to match poe1 profile URLs too, but always
+// queried the poe2 API endpoint regardless -- silently returning the wrong
+// (or a poe2-shaped 404) response instead of a clear error. This server
+// only supports Path of Exile 2 characters.
+test("resolvePobXml rejects a poe.ninja poe1 profile URL with a clear error instead of misreading it as poe2", async () => {
+  await assert.rejects(
+    () => resolvePobXml("https://poe.ninja/poe1/profile/someaccount-1234/standard/character/somechar"),
+    /only supports Path of Exile 2/
+  );
+});
+
 test("resolvePobXml decodes a share code when nothing else matches", async () => {
   const xml = "<PathOfBuilding2><Build level=\"50\" /></PathOfBuilding2>";
   const code = toShareCode(xml);

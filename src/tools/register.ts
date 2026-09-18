@@ -1,30 +1,18 @@
 import { z } from "zod";
-import fs from "node:fs";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ClientLogTailer } from "../adapters/client-log.js";
-import { fetchCharacterState, fetchInventorySnapshot, listCharacterNames } from "../adapters/ggg-api.js";
-import { isPobRunning, listRecentPobBuilds, readPobBuildFile, validatePobBuildFile } from "../adapters/pob.js";
-import { resolveAccountName, saveAccountName, resolvePobBuildsDir } from "../config.js";
-import { resolvePobXml } from "../build/pob-decode.js";
-import { parsePobXml } from "../build/pob-parser.js";
+import { listCharacterNames } from "../adapters/ggg-api.js";
+import { isPobRunning, listRecentPobBuilds } from "../adapters/pob.js";
+import { resolveAccountName, resolvePobBuildsDir } from "../config.js";
 import { dispatchAdvisory } from "../advisory/dispatch.js";
-import type { ActiveBuildRecord, AdvisoryAction, InventorySnapshot } from "../types.js";
+import type { AdvisoryAction } from "../types.js";
+import { fetchNinjaCharacters } from "../adapters/poe-ninja.js";
 import {
-  fetchNinjaCharacters,
-  fetchNinjaAsPobBuild,
-  parseNinjaProfileUrl,
-} from "../adapters/poe-ninja.js";
-import {
-  saveActiveBuild,
-  resolveActiveBuildRecord,
   refreshActiveBuild,
   clearActiveBuild,
   getActiveBuildStatus,
-  pobBuildToInventorySnapshot,
 } from "../adapters/active-build.js";
-import { findTradeUpgrades, createTradeSearch } from "../adapters/trade.js";
 import * as handlers from "./handlers.js";
-import { activeBuildContext, resolveCharacterName } from "./handlers.js";
 
 function jsonResult(data: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] };
@@ -360,41 +348,11 @@ export function registerTools(server: McpServer, log: ClientLogTailer): void {
     },
     async ({ slot, priorities, minimumGain, maxPrice, currency, maxRequiredLevel, league, characterName, resultLimit }) => {
       try {
-        let inventory: InventorySnapshot;
-        let resolvedLeague = league;
-        let activeBuild: ActiveBuildRecord | null = null;
-        try {
-          const name = await resolveCharacterName(characterName, log);
-          inventory = await fetchInventorySnapshot(name);
-          if (!resolvedLeague) resolvedLeague = (await fetchCharacterState(name)).league ?? undefined;
-        } catch (primaryError) {
-          if (characterName) throw primaryError;
-          const record = await resolveActiveBuildRecord();
-          if (record) {
-            activeBuild = record;
-            inventory = pobBuildToInventorySnapshot(record.build, record.identity.characterName ?? undefined);
-            resolvedLeague ??= record.identity.league ?? undefined;
-          } else {
-            // When GGG OAuth tokens and active build are both unavailable, fall back to a baseline
-            // empty inventory so the trade search and official link generation can still proceed!
-            inventory = {
-              source: "pob_import",
-              fetchedAt: new Date().toISOString(),
-              characterName: "Player",
-              equipment: [],
-              skills: [],
-            };
-            resolvedLeague ??= "Standard";
-          }
-        }
-        resolvedLeague ??= "Standard";
-        const result = await findTradeUpgrades({
-          inventory, league: resolvedLeague, slot, priorities, minimumGain,
-          maxPrice, currency, maxRequiredLevel, resultLimit,
-        });
-        return jsonResult(
-          activeBuild ? { ...result, activeBuild: activeBuildContext(activeBuild) } : result
+        const result = await handlers.findTradeUpgradesHandler(
+          { slot, priorities, minimumGain, maxPrice, currency, maxRequiredLevel, league, characterName, resultLimit },
+          log
         );
+        return jsonResult(result);
       } catch (err) { return errorResult(err); }
     }
   );
@@ -431,12 +389,7 @@ export function registerTools(server: McpServer, log: ClientLogTailer): void {
     },
     async (options) => {
       try {
-        let resolvedLeague = options.league;
-        if (!resolvedLeague) {
-          const active = await resolveActiveBuildRecord();
-          resolvedLeague = active?.identity.league ?? "Standard";
-        }
-        const result = await createTradeSearch({ ...options, league: resolvedLeague });
+        const result = await handlers.createTradeSearchHandler(options);
         return jsonResult(result);
       } catch (err) {
         return errorResult(err);
@@ -569,29 +522,8 @@ export function registerTools(server: McpServer, log: ClientLogTailer): void {
             new Error("Provide either 'code' (a share code, URL, or raw XML) or 'filePath'.")
           );
         }
-        let raw: string;
-        let sourceFile: string | null = null;
-        let sourceModifiedAt: string | null = null;
-        if (filePath) {
-          const buildsDir = resolvePobBuildsDir();
-          if (!buildsDir) {
-            return errorResult(new Error("Set POE2_POB_BUILDS_PATH before importing a local build file."));
-          }
-          sourceFile = validatePobBuildFile(filePath, buildsDir);
-          sourceModifiedAt = fs.statSync(sourceFile).mtime.toISOString();
-          raw = readPobBuildFile(sourceFile, buildsDir);
-        } else {
-          raw = code!;
-        }
-        const xml = await resolvePobXml(raw);
-        const parsed = parsePobXml(xml);
-        saveActiveBuild(parsed, {
-          origin: filePath ? "explicit_file" : "explicit_code",
-          pinned: true,
-          sourcePath: sourceFile,
-          sourceModifiedAt,
-        });
-        return jsonResult(parsed);
+        const result = await handlers.importPobBuildHandler(filePath ?? code!, Boolean(filePath));
+        return jsonResult(result);
       } catch (err) {
         return errorResult(err);
       }
@@ -614,21 +546,7 @@ export function registerTools(server: McpServer, log: ClientLogTailer): void {
       annotations: { readOnlyHint: false, destructiveHint: false },
     },
     async ({ accountName }) => {
-      try {
-        saveAccountName(accountName);
-        const chars = await fetchNinjaCharacters(accountName);
-        return jsonResult({
-          message: `Account name saved as "${accountName}". Verified on poe.ninja: found ${chars.length} characters.`,
-          characters: chars,
-        });
-      } catch (err) {
-        saveAccountName(accountName);
-        return jsonResult({
-          message: `Account name saved as "${accountName}". Note: poe.ninja check returned: ${
-            err instanceof Error ? err.message : String(err)
-          }. Ensure your PoE profile character tab is set to public.`,
-        });
-      }
+      return jsonResult(await handlers.setAccountNameHandler(accountName));
     }
   );
 
@@ -663,91 +581,8 @@ export function registerTools(server: McpServer, log: ClientLogTailer): void {
     },
     async ({ profileUrl, accountName, characterName, league }) => {
       try {
-        let acc = accountName ?? resolveAccountName();
-        let l = league;
-        let char = characterName;
-        let identityLeague: string | undefined;
-        let sourceUpdatedAt: string | undefined;
-
-        if (profileUrl) {
-          const parsed = parseNinjaProfileUrl(profileUrl);
-          if (!parsed) {
-            return errorResult(
-              new Error(
-                "Invalid poe.ninja URL format. Expected: https://poe.ninja/poe2/profile/<account>/<league>/character/<name>"
-              )
-            );
-          }
-          acc = parsed.account;
-          l = parsed.league;
-          char = parsed.character;
-        }
-
-        if (!acc) {
-          return errorResult(
-            new Error(
-              "No account name provided. Pass accountName, a full poe.ninja profileUrl, or run set_account_name."
-            )
-          );
-        }
-
-        if (!char || !l) {
-          const chars = await fetchNinjaCharacters(acc);
-          const match = char
-            ? chars.find((c) => c.name.toLowerCase() === char!.toLowerCase())
-            : chars.find((c) => c.isCurrent) ?? chars[0];
-          if (!match) {
-            return errorResult(
-              new Error(
-                `Character "${char ?? "current"}" not found on poe.ninja for account "${acc}". Available: ${chars
-                  .map((c) => c.name)
-                  .join(", ")}`
-              )
-            );
-          }
-          char = match.name;
-          l = match.leagueUrl;
-          identityLeague = match.league;
-          sourceUpdatedAt = match.updated;
-        } else {
-          try {
-            const match = (await fetchNinjaCharacters(acc)).find(
-              (candidate) => candidate.name.toLowerCase() === char!.toLowerCase()
-            );
-            if (match) {
-              // Prefer poe.ninja's own leagueUrl slug over whatever the
-              // caller passed -- a display name like "Rise of the Abyssal"
-              // does not reliably normalize to the real slug ("roa").
-              l = match.leagueUrl;
-              identityLeague = match.league;
-              sourceUpdatedAt = match.updated;
-            }
-          } catch {}
-        }
-
-        const build = await fetchNinjaAsPobBuild(acc, l, char);
-        saveActiveBuild(build, {
-          origin: "poe_ninja",
-          pinned: true,
-          sourceUpdatedAt,
-          // `l` is the leagueUrl slug used for this fetch (and the one a
-          // later refresh must reuse); `identityLeague` is only the display
-          // label poe.ninja returned, which can differ from the slug.
-          identity: { accountName: acc, characterName: char, league: identityLeague ?? l, leagueUrl: l },
-        });
-        return jsonResult({
-          imported: true,
-          source: "poe_ninja",
-          account: acc,
-          league: l,
-          characterName: char,
-          className: build.className,
-          ascendancy: build.ascendClassName,
-          level: build.level,
-          equipmentCount: build.equipment.length,
-          skillsCount: build.skills.length,
-          playerStatsCount: build.playerStats?.length ?? 0,
-        });
+        const result = await handlers.importPoeNinjaCharacterHandler({ profileUrl, accountName, characterName, league });
+        return jsonResult(result);
       } catch (err) {
         return errorResult(err);
       }
