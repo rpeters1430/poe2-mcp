@@ -203,3 +203,157 @@ export async function resolveNodeNames(nodeIds: number[]): Promise<TreeDataResol
         : "All allocated node ids matched."),
   };
 }
+
+export interface TreeNodeSearchResult {
+  matches: ResolvedPassiveNode[];
+  note: string;
+}
+
+/**
+ * Case-insensitive substring search over every node's display name, for
+ * turning a player's "I picked up Zealot's Oath" into the node id
+ * update_active_build_progress needs -- the inverse of resolveNodeNames,
+ * which only resolves ids the caller already has (i.e. already-allocated
+ * ones). Not allocation-aware: results include nodes regardless of whether
+ * they're currently allocated on any build.
+ */
+export async function searchNodesByName(query: string, limit = 20): Promise<TreeNodeSearchResult> {
+  const envelope = await getTreeData();
+  if (!envelope) {
+    return {
+      matches: [],
+      note:
+        `Could not search the passive tree dataset: failed to fetch it from ${TREE_DATA_URL} and no usable ` +
+        "cached copy was found (offline, or the source is unreachable).",
+    };
+  }
+
+  const needle = query.trim().toLowerCase();
+  if (!needle) return { matches: [], note: "Empty query." };
+
+  const matches: ResolvedPassiveNode[] = [];
+  for (const [key, node] of Object.entries(envelope.data.nodes ?? {})) {
+    const name = firstString(node, ["name", "dn"]);
+    if (!name || !name.toLowerCase().includes(needle)) continue;
+    const id = Number(node["skill"] ?? key);
+    if (!Number.isFinite(id)) continue;
+    matches.push({
+      id,
+      name,
+      isKeystone: firstBoolean(node, ["isKeystone", "ks"]),
+      isNotable: firstBoolean(node, ["isNotable", "not"]),
+      isMastery: firstBoolean(node, ["isMastery", "m"]),
+      ascendancyId: firstString(node, ["ascendancyId", "ascendancyName"]),
+      stats: statLines(node),
+    });
+    if (matches.length >= limit) break;
+  }
+
+  return {
+    matches,
+    note:
+      `Searched via GGG's official PoE2 tree export (cached from ${TREE_DATA_URL}, fetched ${envelope.fetchedAt}). ` +
+      `${matches.length} match(es) for "${query}"${matches.length >= limit ? " (limit reached, narrow the query for more)" : ""}.`,
+  };
+}
+
+function connectedIds(node: RawTreeNode): string[] {
+  const ids: string[] = [];
+  for (const key of ["out", "in"]) {
+    const v = node[key];
+    if (Array.isArray(v)) for (const e of v) ids.push(String(e));
+  }
+  return ids;
+}
+
+export interface NearbyPassiveUpgrade extends ResolvedPassiveNode {
+  /** Graph distance (in edges) from the nearest currently allocated node. */
+  hops: number;
+}
+
+export interface NearbyPassiveUpgradesResult {
+  candidates: NearbyPassiveUpgrade[];
+  note: string;
+}
+
+/**
+ * Finds unallocated notable/keystone (optionally mastery) nodes reachable
+ * within `maxHops` edges of the given allocated node ids, via a breadth-first
+ * walk of the tree's own `out`/`in` edge lists -- so recommendations are
+ * grounded in the real, currently-patched tree graph rather than an LLM's
+ * (possibly stale/wrong-league) memory of tree layout. Hop count from the
+ * nearest allocated node approximates the minimum extra passive points
+ * needed to reach it, though a node with several incoming paths may cost
+ * more in practice if the shortest path overlaps another one you'd also
+ * want -- treat this as a shortlist to verify in-game/PoB, not a final plan.
+ */
+export async function findNearbyPassiveUpgrades(
+  allocatedNodeIds: number[],
+  options: { maxHops?: number; limit?: number; includeMasteries?: boolean } = {}
+): Promise<NearbyPassiveUpgradesResult> {
+  const envelope = await getTreeData();
+  if (!envelope) {
+    return {
+      candidates: [],
+      note:
+        `Could not search the passive tree dataset: failed to fetch it from ${TREE_DATA_URL} and no usable ` +
+        "cached copy was found (offline, or the source is unreachable).",
+    };
+  }
+
+  const maxHops = options.maxHops ?? 2;
+  const limit = options.limit ?? 25;
+  const nodes = envelope.data.nodes ?? {};
+
+  const hopsById = new Map<string, number>();
+  let frontier = allocatedNodeIds.map(String);
+  for (const id of frontier) hopsById.set(id, 0);
+
+  for (let hop = 1; hop <= maxHops && frontier.length > 0; hop++) {
+    const next: string[] = [];
+    for (const id of frontier) {
+      const node = nodes[id];
+      if (!node) continue;
+      for (const neighbor of connectedIds(node)) {
+        if (hopsById.has(neighbor)) continue;
+        hopsById.set(neighbor, hop);
+        next.push(neighbor);
+      }
+    }
+    frontier = next;
+  }
+
+  const candidates: NearbyPassiveUpgrade[] = [];
+  for (const [id, hops] of hopsById) {
+    if (hops === 0) continue; // already allocated
+    const node = nodes[id];
+    if (!node) continue;
+    const isKeystone = firstBoolean(node, ["isKeystone", "ks"]);
+    const isNotable = firstBoolean(node, ["isNotable", "not"]);
+    const isMastery = firstBoolean(node, ["isMastery", "m"]);
+    if (!isKeystone && !isNotable && !(options.includeMasteries && isMastery)) continue;
+    candidates.push({
+      id: Number(id),
+      name: firstString(node, ["name", "dn"]),
+      isKeystone,
+      isNotable,
+      isMastery,
+      ascendancyId: firstString(node, ["ascendancyId", "ascendancyName"]),
+      stats: statLines(node),
+      hops,
+    });
+  }
+
+  candidates.sort((a, b) => a.hops - b.hops || (a.name ?? "").localeCompare(b.name ?? ""));
+  const limited = candidates.slice(0, limit);
+
+  return {
+    candidates: limited,
+    note:
+      `Notable/keystone${options.includeMasteries ? "/mastery" : ""} nodes within ${maxHops} hop(s) of your ` +
+      `currently allocated passives (via GGG's official PoE2 tree export, cached ${envelope.fetchedAt}), not ` +
+      `already allocated. ${candidates.length} found` +
+      (candidates.length > limited.length ? `, showing the closest ${limited.length}` : "") +
+      ". Hop count approximates extra points required, not a guaranteed final cost -- verify the actual path in-game or PoB before committing.",
+  };
+}

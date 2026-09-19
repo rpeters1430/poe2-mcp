@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   getServerStatus,
+  getSkillSetupHandler,
   importPobBuildHandler,
   importPoeNinjaCharacterHandler,
   setAccountNameHandler,
@@ -115,6 +116,32 @@ test("setAccountNameHandler saves the account name even when the poe.ninja check
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+});
+
+test("getSkillSetupHandler returns the active PoB build's accurate skill/support groups", async () => {
+  await withTempConfigDir(async () => {
+    const xml = `<PathOfBuilding2><Build level="42" className="Witch"/><Items/>
+      <Skills activeSkillSet="1">
+        <SkillSet id="1">
+          <Skill label="Main" slot="Body Armour" enabled="true" mainActiveSkill="1">
+            <Gem nameSpec="Fireball" skillId="Fireball" level="20" quality="20" enabled="true"/>
+            <Gem nameSpec="Spell Echo Support" skillId="SupportSpellEcho" level="20" quality="20" enabled="true"/>
+          </Skill>
+        </SkillSet>
+      </Skills>
+      <Tree/></PathOfBuilding2>`;
+    await importPobBuildHandler(xml, false);
+
+    const result = await getSkillSetupHandler(undefined, new ClientLogTailer("nonexistent-client-log.txt"));
+    assert.equal(result.source, "pob_import");
+    assert.equal(result.skillGroups.length, 1);
+    assert.equal(result.skillGroups[0].mainActiveSkill, 1);
+    assert.deepEqual(
+      result.skillGroups[0].gems.map((g) => g.nameSpec),
+      ["Fireball", "Spell Echo Support"]
+    );
+    assert.match(result.note, /accurate|PoB2\/poe\.ninja export/);
   });
 });
 

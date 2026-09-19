@@ -46,6 +46,10 @@ reliably supports today.
 | `get_active_build_status` | Active-build provenance envelope | On request; file/ninja source may refresh |
 | `refresh_active_build` | Selected PoB file or poe.ninja identity | Explicit refresh |
 | `clear_active_build` | Local active-build state | Write-through |
+| `update_active_build_progress` | Local active-build state | Write-through (hand-tracked level/passive edits, no game-process access) |
+| `search_passive_tree_nodes` | GGG's official PoE2 tree export (cached) | On request (name → node id lookup) |
+| `find_passive_tree_upgrades` | GGG's official PoE2 tree export (cached) | On request (graph walk from current allocation) |
+| `get_skill_setup` | PoB2/poe.ninja active build, or GGG official API (flat, heuristic) | On request |
 | `get_passive_tree` | GGG official API | On request (network call) |
 | `get_defenses` | GGG official API (gear-only, computed) | On request (network call) |
 | `get_offense_stats` | GGG official API (gear-only, computed) | On request (network call) |
@@ -115,6 +119,35 @@ or point at a `.xml` file inside the configured `POE2_POB_BUILDS_PATH`);
 `is_pob_running`/`list_recent_pob_builds` are best-effort convenience checks
 only -- see `src/adapters/pob.ts` and `src/build/pob-parser.ts` for the
 schema notes and what's still unverified against a real install.
+
+A fifth category, manual build tracking (`update_active_build_progress`,
+`search_passive_tree_nodes`), lets the AI act on progress the player simply
+reports in chat -- "I just leveled up", "I took Zealot's Oath" -- without
+requiring a fresh PoB2 export or poe.ninja sync for every such message.
+Like `set_active_character`/`clear_active_build` above, this is a local
+state write-through, not a widening of the advisory-only boundary in
+Direction 2 below: it edits `configDir()/active-build.json` and never
+touches the game process. If no active build exists yet, it can start a
+brand-new hand-tracked one (`source`/`origin: "manual"`) with empty
+equipment/skills until a real build is later imported; editing an existing
+build pins it so automatic PoB-file/poe.ninja re-selection doesn't silently
+discard the edit. `search_passive_tree_nodes` resolves a passive's name to
+the node id this needs, via the same tree dataset `get_passive_tree`'s node
+resolution uses (see the README's "A note on `get_passive_tree`'s node name
+resolution").
+
+A sixth category, build-optimization grounding (`find_passive_tree_upgrades`,
+`get_skill_setup`), exists so "how can I improve my passive tree / support
+gems" answers are anchored in real fetched data rather than the AI's own
+training-data memory of tree/gem layout, which drifts across PoE2 patches
+and leagues. `find_passive_tree_upgrades` walks the same tree export's
+`out`/`in` edges from the currently allocated nodes to surface real nearby
+unallocated notables/keystones (hop distance approximates, not guarantees,
+extra point cost). `get_skill_setup` is accurate only when backed by a
+PoB2/poe.ninja active build (verified `<Skill>`/`<Gem>` XML grouping); GGG's
+official API has no confirmed support-to-skill link data for PoE2, so the
+fallback can only name-guess which gems are supports. See the README's "A
+note on 'optimize my build' tools" for the full caveat.
 
 ### Schemas
 

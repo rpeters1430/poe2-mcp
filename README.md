@@ -342,6 +342,10 @@ past your home network/router.
 | `set_account_name` | AI → server | Set PoE account name (e.g. `rpeters1428-1042`) for poe.ninja queries |
 | `import_poe_ninja_character` | server → AI | Import character build directly from poe.ninja profile/URL |
 | `get_passive_tree` | server → AI | Allocated passive nodes, resolved to names/stats where possible, + jewel data |
+| `search_passive_tree_nodes` | server → AI | Look up passive node ids by (partial) name, e.g. to resolve a passive the player names in chat |
+| `update_active_build_progress` | AI → server | Hand-track a level-up or passive allocation reported in chat, without needing a fresh PoB2/poe.ninja sync; starts a new hand-tracked build if none exists yet |
+| `find_passive_tree_upgrades` | server → AI | Unallocated notable/keystone nodes within a few hops of your current allocation, from the real tree graph |
+| `get_skill_setup` | server → AI | Current skill + linked support gems (accurate from a PoB2/poe.ninja import; a naming-heuristic guess otherwise) |
 | `get_defenses` | server → AI | Gear-only life/ES/armour/evasion/resistances/block/attributes |
 | `get_offense_stats` | server → AI | Gear-only weapon damage/crit/speed stats (not a DPS number) |
 | `find_trade_upgrades` | server → AI | Search/rank live listings against equipped gear and return the official trade URL |
@@ -430,6 +434,56 @@ age, and a redacted source filename. File-backed builds refresh when their
 mtime changes; poe.ninja-backed builds refresh after five minutes or on
 `refresh_active_build`. Pasted share-code/XML builds cannot be re-fetched and
 must be imported again. `clear_active_build` removes only this local selection.
+
+## A note on manual build tracking (no fresh export needed)
+
+`import_pob_build`/`import_poe_ninja_character` are the reliable path for
+full accuracy (gear, skills, PoB's own DPS/EHP), but they require the player
+to go export/sync something every time they level up or take a passive — a
+gap in the moment-to-moment "I just leveled up" / "I took Zealot's Oath"
+conversation. `update_active_build_progress` (`src/adapters/active-build.ts`)
+closes that gap: it lets the AI hand-update just the active build's level
+and/or allocated passive node ids from what the player says in chat,
+without touching the game process (same local-write-through pattern as
+`set_active_character`/`clear_active_build`, not the `emit_advisory`
+seam — see PROTOCOL.md). If no active build exists yet at all, pass
+`className` to start a brand-new one (`source: "manual"`, `origin:
+"manual"`) with empty equipment/skills until a real build is later
+imported. Editing an existing build pins it (`pinned: true`) so automatic
+PoB-file/poe.ninja re-selection won't silently discard the edit; an explicit
+`refresh_active_build`, or the underlying source actually changing, is still
+the way to resync from the original source and drop the manual edits.
+`search_passive_tree_nodes` resolves a passive's name (as the player said
+it) to the node id `addPassiveNodeIds` needs, using the same tree dataset as
+`get_passive_tree`'s node-name resolution above.
+
+## A note on "optimize my build" tools
+
+`find_passive_tree_upgrades` and `get_skill_setup` exist to ground "how can I
+improve my passive tree / support gems" answers in real fetched data instead
+of the AI's own (possibly stale, possibly wrong-league) memory:
+
+- `find_passive_tree_upgrades` does a breadth-first walk of the real tree
+  graph (`out`/`in` edges in the same GGG tree export used for node-name
+  resolution) out from your currently allocated nodes, and returns nearby
+  unallocated notables/keystones (optionally masteries) with their real stat
+  text and hop distance. It does not know your build's damage type/defense
+  priorities — that judgment call is left to the AI, informed by
+  `get_defenses`/`get_offense_stats`, over concrete real candidates rather
+  than invented ones. Hop distance approximates extra points needed, not a
+  guaranteed final pathing cost.
+- `get_skill_setup` surfaces the character's skill and support gems. This is
+  only accurate when an active PoB2/poe.ninja build is imported — PoB's own
+  `<Skill>`/`<Gem>` XML groups each active skill with its attached supports
+  correctly (`src/build/pob-parser.ts`). Without one, it falls back to GGG's
+  official API, which returns skill/support gems as one flat item list with
+  no confirmed support-to-skill link data for PoE2 — the fallback can only
+  guess "support" from gem naming (`likelySupport`), not group gems by skill.
+  There is no public support-gem compatibility/tag dataset for PoE2 the way
+  the tree export exists for passives, so any specific support swap
+  suggested on top of this data is the AI's own game knowledge, not
+  something this server verified — same category of gap as
+  `get_offense_stats` not producing a real DPS number.
 
 ## Trade upgrade searches
 

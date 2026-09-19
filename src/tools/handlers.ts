@@ -32,12 +32,15 @@ import {
   pobBuildToCharacterState,
   saveActiveBuild,
   refreshActiveBuild,
+  updateActiveBuildProgress,
+  type UpdateActiveBuildProgressOptions,
 } from "../adapters/active-build.js";
 import { parsePobXml } from "../build/pob-parser.js";
 import { resolvePobXml } from "../build/pob-decode.js";
 import { validatePobBuildFile, readPobBuildFile } from "../adapters/pob.js";
 import { getLatestClipboardItem } from "../adapters/clipboard-store.js";
 import { createTradeSearch, findTradeUpgrades, type FindTradeUpgradesOptions } from "../adapters/trade.js";
+import { resolveNodeNames, searchNodesByName, findNearbyPassiveUpgrades } from "../adapters/tree-data.js";
 import type { ActiveBuildRecord, GameEventType, InventorySnapshot, TradeSearchOptions } from "../types.js";
 
 export function activeBuildContext(record: ActiveBuildRecord) {
@@ -214,6 +217,60 @@ export async function getPassiveTree(characterName: string | undefined, log: Cli
     }
   }
   throw primaryError;
+}
+
+export async function findPassiveTreeUpgradesHandler(
+  characterName: string | undefined,
+  log: ClientLogTailer,
+  options: { maxHops?: number; limit?: number; includeMasteries?: boolean }
+) {
+  const tree = await getPassiveTree(characterName, log);
+  const result = await findNearbyPassiveUpgrades(tree.allocatedHashes, options);
+  return {
+    ...result,
+    characterName: tree.characterName,
+    allocatedCount: tree.allocatedHashes.length,
+  };
+}
+
+export async function getSkillSetupHandler(characterName: string | undefined, log: ClientLogTailer) {
+  const active = await resolveActiveBuildRecord();
+  if (active && (!characterName || active.identity.characterName?.toLowerCase() === characterName.toLowerCase())) {
+    return {
+      source: active.build.source,
+      fetchedAt: active.build.importedAt,
+      characterName: active.identity.characterName ?? active.build.className ?? characterName ?? "Current Character",
+      skillGroups: active.build.skills,
+      activeBuild: activeBuildContext(active),
+      note:
+        "Each group is one linked skill setup, from a PoB2/poe.ninja export: 'mainActiveSkill' is the index " +
+        "(into 'gems') of the active skill gem, and every other entry in that group's 'gems' is a support gem " +
+        "attached to it. Not available for GGG-API-only characters with no active build imported.",
+    };
+  }
+
+  // No PoB/poe.ninja build to fall back on -- GGG's API returns skill/support
+  // gems as a flat item list with no confirmed support-to-skill link data for
+  // PoE2, so this can only heuristically flag likely support gems by name
+  // (GGG consistently suffixes support gem names with "Support"), not group
+  // them by the skill they're attached to.
+  const name = await resolveCharacterName(characterName, log);
+  const inventory = await fetchInventorySnapshot(name);
+  return {
+    source: inventory.source,
+    fetchedAt: inventory.fetchedAt,
+    characterName: inventory.characterName,
+    gems: inventory.skills.map((item) => ({
+      name: item.name,
+      baseType: item.baseType,
+      likelySupport: /support/i.test(item.baseType) || /support/i.test(item.name),
+      properties: item.properties,
+    })),
+    note:
+      "GGG's official API returns skill/support gems as a flat list with no verified support-to-skill link data " +
+      "for PoE2 -- 'likelySupport' is a name-based heuristic, not confirmed grouping. Import a build via " +
+      "import_pob_build or import_poe_ninja_character for accurate per-skill support setups.",
+  };
 }
 
 export async function importPobBuildHandler(codeOrFilePath: string, isFilePath = false) {
@@ -439,6 +496,30 @@ export async function refreshActiveBuildHandler() {
 
 export async function getActiveBuildStatus() {
   return fetchActiveBuildStatus();
+}
+
+export async function updateActiveBuildProgressHandler(options: UpdateActiveBuildProgressOptions) {
+  const record = updateActiveBuildProgress(options);
+  const [addedNodes, removedNodes] = await Promise.all([
+    options.addPassiveNodeIds?.length ? resolveNodeNames(options.addPassiveNodeIds) : null,
+    options.removePassiveNodeIds?.length ? resolveNodeNames(options.removePassiveNodeIds) : null,
+  ]);
+  return {
+    success: true,
+    record,
+    status: await fetchActiveBuildStatus(),
+    applied: {
+      level: options.level ?? null,
+      className: options.className ?? null,
+      ascendClassName: options.ascendClassName ?? null,
+      addedNodes: addedNodes?.resolvedNodes ?? [],
+      removedNodes: removedNodes?.resolvedNodes ?? [],
+    },
+  };
+}
+
+export async function searchPassiveTreeNodesHandler(query: string, limit?: number) {
+  return searchNodesByName(query, limit);
 }
 
 export function getLatestClipboardItemTool() {

@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   clearActiveBuild, getActiveBuildStatus, loadActiveBuildRecord, resetRefreshBackoffForTests,
-  resolveActiveBuildRecord, saveActiveBuild,
+  resolveActiveBuildRecord, saveActiveBuild, updateActiveBuildProgress,
 } from "./active-build.js";
 import { parsePobXml } from "../build/pob-parser.js";
 
@@ -321,6 +321,88 @@ test("automatic poe.ninja selection switches when the character's league changes
     else process.env.POE2_MCP_CONFIG_DIR = previousConfig;
     if (previousPob === undefined) delete process.env.POE2_POB_BUILDS_PATH;
     else process.env.POE2_POB_BUILDS_PATH = previousPob;
+  }
+});
+
+test("updateActiveBuildProgress starts a fresh hand-tracked build when none exists yet", async () => {
+  const previousConfig = process.env.POE2_MCP_CONFIG_DIR;
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), "poe2-mcp-active-manual-fresh-test-"));
+  const config = path.join(parent, "config");
+  fs.mkdirSync(config);
+  process.env.POE2_MCP_CONFIG_DIR = config;
+
+  try {
+    assert.throws(() => updateActiveBuildProgress({ level: 5 }), /Provide 'className'/);
+
+    const record = updateActiveBuildProgress({
+      className: "Ranger",
+      level: 12,
+      addPassiveNodeIds: [111, 222],
+    });
+    assert.equal(record.origin, "manual");
+    assert.equal(record.pinned, true);
+    assert.equal(record.build.source, "manual");
+    assert.equal(record.build.className, "Ranger");
+    assert.equal(record.build.level, 12);
+    assert.deepEqual(record.build.passiveTree.allocatedNodeIds, [111, 222]);
+    assert.equal(record.build.equipment.length, 0);
+    assert.ok(record.manualEditsAt);
+
+    const status = await getActiveBuildStatus();
+    assert.equal(status.origin, "manual");
+    assert.equal(status.buildSummary?.level, 12);
+    assert.ok(status.manualEditsAt);
+  } finally {
+    if (previousConfig === undefined) delete process.env.POE2_MCP_CONFIG_DIR;
+    else process.env.POE2_MCP_CONFIG_DIR = previousConfig;
+  }
+});
+
+test("updateActiveBuildProgress merges onto an existing build and pins it so auto-refresh won't discard the edit", async () => {
+  const previousConfig = process.env.POE2_MCP_CONFIG_DIR;
+  const previousBuilds = process.env.POE2_POB_BUILDS_PATH;
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), "poe2-mcp-active-manual-merge-test-"));
+  const config = path.join(parent, "config");
+  const builds = path.join(parent, "Builds");
+  fs.mkdirSync(config);
+  fs.mkdirSync(builds);
+  process.env.POE2_MCP_CONFIG_DIR = config;
+  process.env.POE2_POB_BUILDS_PATH = builds;
+  const file = path.join(builds, "example.xml");
+  fs.writeFileSync(file, xml(10));
+  const mtime = fs.statSync(file).mtime.toISOString();
+
+  try {
+    saveActiveBuild(parsePobXml(xml(10)), {
+      origin: "auto_pob_file",
+      pinned: false,
+      sourcePath: file,
+      sourceModifiedAt: mtime,
+      identity: { characterName: "Example", league: "Standard" },
+    });
+
+    const record = updateActiveBuildProgress({ level: 11, addPassiveNodeIds: [55, 66] });
+    assert.equal(record.origin, "auto_pob_file");
+    assert.equal(record.pinned, true);
+    assert.equal(record.build.level, 11);
+    assert.deepEqual(record.build.passiveTree.allocatedNodeIds, [55, 66]);
+    assert.equal(record.identity.characterName, "Example");
+
+    // A respec: add one node, remove another, and a redundant add of an
+    // already-allocated node must not duplicate it.
+    const respecced = updateActiveBuildProgress({ addPassiveNodeIds: [55, 77], removePassiveNodeIds: [66] });
+    assert.deepEqual(respecced.build.passiveTree.allocatedNodeIds, [55, 77]);
+
+    // Once pinned by a manual edit, automatic resolution must not silently
+    // discard it just because the source file still exists unchanged.
+    const resolved = await resolveActiveBuildRecord();
+    assert.equal(resolved?.build.level, 11);
+    assert.deepEqual(resolved?.build.passiveTree.allocatedNodeIds, [55, 77]);
+  } finally {
+    if (previousConfig === undefined) delete process.env.POE2_MCP_CONFIG_DIR;
+    else process.env.POE2_MCP_CONFIG_DIR = previousConfig;
+    if (previousBuilds === undefined) delete process.env.POE2_POB_BUILDS_PATH;
+    else process.env.POE2_POB_BUILDS_PATH = previousBuilds;
   }
 });
 

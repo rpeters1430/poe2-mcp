@@ -13,8 +13,8 @@
 // ---------------------------------------------------------------------------
 
 export interface CharacterState {
-  /** Source of truth for this snapshot. */
-  source: "ggg_api" | "pob_import" | "poe_ninja";
+  /** Source of truth for this snapshot. "manual" means hand-tracked via update_active_build_progress, not fetched from anywhere. */
+  source: "ggg_api" | "pob_import" | "poe_ninja" | "manual";
   /** ISO 8601 timestamp of when this snapshot was fetched (not live). */
   fetchedAt: string;
   name: string;
@@ -64,7 +64,7 @@ export interface InventoryItem {
 }
 
 export interface InventorySnapshot {
-  source: "ggg_api" | "pob_import" | "poe_ninja";
+  source: "ggg_api" | "pob_import" | "poe_ninja" | "manual";
   fetchedAt: string;
   characterName: string;
   equipment: InventoryItem[];
@@ -109,7 +109,7 @@ export interface ResolvedPassiveNode {
 }
 
 export interface PassiveTreeSnapshot {
-  source: "ggg_api" | "pob_import" | "poe_ninja";
+  source: "ggg_api" | "pob_import" | "poe_ninja" | "manual";
   fetchedAt: string;
   characterName: string;
   ascendancyClass: string | null;
@@ -268,7 +268,8 @@ export interface PobPassiveSpec {
 }
 
 export interface PobBuildSnapshot {
-  source: "pob_import" | "poe_ninja";
+  /** "manual" is a hand-tracked build with no PoB/poe.ninja backing -- see update_active_build_progress. */
+  source: "pob_import" | "poe_ninja" | "manual";
   importedAt: string;
   className: string | null;
   ascendClassName: string | null;
@@ -288,6 +289,7 @@ export type ActiveBuildOrigin =
   | "poe_ninja"
   | "auto_pob_file"
   | "auto_poe_ninja"
+  | "manual"
   | "legacy";
 
 export interface ActiveBuildIdentity {
@@ -310,6 +312,8 @@ export interface ActiveBuildRecord {
   sourceModifiedAt: string | null;
   sourceUpdatedAt: string | null;
   identity: ActiveBuildIdentity;
+  /** ISO timestamp of the last update_active_build_progress call, if any (level/passive edits applied on top of the source). */
+  manualEditsAt?: string | null;
 }
 
 export interface ActiveBuildStatus {
@@ -325,6 +329,7 @@ export interface ActiveBuildStatus {
   sourceModifiedAt: string | null;
   sourceUpdatedAt: string | null;
   identity: ActiveBuildIdentity | null;
+  manualEditsAt: string | null;
   buildSummary: {
     className: string | null;
     ascendClassName: string | null;

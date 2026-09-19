@@ -274,9 +274,107 @@ export async function refreshActiveBuild(): Promise<ActiveBuildRecord> {
   const record = loadActiveBuildRecord();
   if (!record) throw new Error("No active build is available to refresh.");
   if (!record.sourcePath && record.origin !== "poe_ninja" && record.origin !== "auto_poe_ninja") {
-    throw new Error("This build came from pasted XML/share code and cannot be refreshed; import it again.");
+    throw new Error(
+      record.origin === "manual"
+        ? "This is a hand-tracked build with no PoB2/poe.ninja source to refresh from -- keep updating it with update_active_build_progress, or import a real build to replace it."
+        : "This build came from pasted XML/share code and cannot be refreshed; import it again."
+    );
   }
   return refreshRecord(record, true);
+}
+
+export interface UpdateActiveBuildProgressOptions {
+  level?: number;
+  className?: string;
+  ascendClassName?: string;
+  addPassiveNodeIds?: number[];
+  removePassiveNodeIds?: number[];
+}
+
+function applyProgress(build: PobBuildSnapshot, options: UpdateActiveBuildProgressOptions): PobBuildSnapshot {
+  const toRemove = new Set(options.removePassiveNodeIds ?? []);
+  const merged = build.passiveTree.allocatedNodeIds.filter((id) => !toRemove.has(id));
+  for (const id of options.addPassiveNodeIds ?? []) {
+    if (!merged.includes(id) && !toRemove.has(id)) merged.push(id);
+  }
+  return {
+    ...build,
+    level: options.level ?? build.level,
+    className: options.className ?? build.className,
+    ascendClassName: options.ascendClassName ?? build.ascendClassName,
+    passiveTree: { ...build.passiveTree, allocatedNodeIds: merged },
+  };
+}
+
+/**
+ * Hand-track level/passive-allocation progress the player reports in chat
+ * (e.g. "I just hit level 34 and took Zealot's Oath") without requiring a
+ * fresh PoB2 export or a poe.ninja profile -- the gap that otherwise leaves
+ * an AI client with no tool to act on that kind of message. If no active
+ * build exists yet, `className` is required and a fresh minimal build is
+ * created (empty equipment/skills, source "manual"); if one exists, the
+ * edit is applied on top of it and the record is pinned so automatic
+ * PoB-file/poe.ninja re-selection doesn't silently discard the edit --
+ * `refresh_active_build` (or a genuinely newer source file/poe.ninja sync)
+ * remains the explicit way to discard manual edits and resync from the
+ * original source.
+ */
+export function updateActiveBuildProgress(options: UpdateActiveBuildProgressOptions): ActiveBuildRecord {
+  const stored = loadActiveBuildRecord();
+  const now = new Date().toISOString();
+
+  if (!stored) {
+    if (!options.className) {
+      throw new Error(
+        "No active build exists yet. Provide 'className' to start hand-tracking one (e.g. right after a fresh " +
+          "league start with no PoB export or poe.ninja profile yet), or import a real build first via " +
+          "import_pob_build / import_poe_ninja_character / set_account_name."
+      );
+    }
+    const build: PobBuildSnapshot = {
+      source: "manual",
+      importedAt: now,
+      className: options.className,
+      ascendClassName: options.ascendClassName ?? null,
+      level: options.level ?? 1,
+      equipment: [],
+      skills: [],
+      passiveTree: {
+        classId: null,
+        ascendClassId: null,
+        allocatedNodeIds: [...new Set(options.addPassiveNodeIds ?? [])],
+        masteryEffects: null,
+      },
+      playerStats: [],
+      note:
+        "Hand-tracked build with no PoB2/poe.ninja backing -- equipment and skills are empty until a real build " +
+        "is imported. Only level and passive allocations reflect what's been reported via update_active_build_progress.",
+    };
+    const record: ActiveBuildRecord = {
+      version: 1,
+      build,
+      origin: "manual",
+      pinned: true,
+      savedAt: now,
+      refreshedAt: now,
+      sourcePath: null,
+      sourceModifiedAt: null,
+      sourceUpdatedAt: null,
+      identity: emptyIdentity(),
+      manualEditsAt: now,
+    };
+    writeRecord(record);
+    return record;
+  }
+
+  const updated: ActiveBuildRecord = {
+    ...stored,
+    build: applyProgress(stored.build, options),
+    pinned: true,
+    manualEditsAt: now,
+  };
+  writeRecord(updated);
+  return updated;
 }
 
 export function clearActiveBuild(): boolean {
@@ -296,6 +394,7 @@ export async function getActiveBuildStatus(): Promise<ActiveBuildStatus> {
       available: false, origin: null, pinned: null, savedAt: null, refreshedAt: null,
       ageMs: null, stale: null, refreshable: false, sourceFile: null,
       sourceModifiedAt: null, sourceUpdatedAt: null, identity: null, buildSummary: null,
+      manualEditsAt: null,
     };
   }
   const ageMs = Math.max(0, Date.now() - Date.parse(record.refreshedAt));
@@ -318,6 +417,7 @@ export async function getActiveBuildStatus(): Promise<ActiveBuildStatus> {
     sourceModifiedAt: record.sourceModifiedAt,
     sourceUpdatedAt: record.sourceUpdatedAt,
     identity: record.identity,
+    manualEditsAt: record.manualEditsAt ?? null,
     buildSummary: {
       className: record.build.className,
       ascendClassName: record.build.ascendClassName,

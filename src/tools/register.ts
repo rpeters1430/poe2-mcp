@@ -201,6 +201,68 @@ export function registerTools(server: McpServer, log: ClientLogTailer): void {
   );
 
   server.registerTool(
+    "update_active_build_progress",
+    {
+      title: "Track a level-up or passive allocation reported in chat",
+      description:
+        "Hand-update the active build's level and/or allocated passive nodes when the player reports progress " +
+        "directly (e.g. 'I just hit level 34' or 'I took Zealot's Oath'), without needing a fresh PoB2 export or " +
+        "poe.ninja sync. If no active build exists yet, pass 'className' to start tracking a brand-new one " +
+        "(equipment/skills start empty until a real build is imported). Use search_passive_tree_nodes first if " +
+        "you only know a passive's name, not its node id. The record is pinned afterward so automatic PoB-file/" +
+        "poe.ninja re-selection won't silently discard the edit -- refresh_active_build (or a real re-export/sync) " +
+        "is the explicit way to discard manual edits.",
+      inputSchema: {
+        level: z.number().int().min(1).max(100).optional().describe("New character level"),
+        className: z
+          .string()
+          .optional()
+          .describe("Base class (e.g. 'Witch', 'Ranger'). Required only when starting a brand-new hand-tracked build"),
+        ascendClassName: z.string().optional().describe("Ascendancy class name, once chosen"),
+        addPassiveNodeIds: z
+          .array(z.number().int())
+          .optional()
+          .describe("Passive tree node hashes to allocate (from get_passive_tree or search_passive_tree_nodes)"),
+        removePassiveNodeIds: z
+          .array(z.number().int())
+          .optional()
+          .describe("Passive tree node hashes to deallocate (e.g. after a respec)"),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false },
+    },
+    async (options) => {
+      try {
+        return jsonResult(await handlers.updateActiveBuildProgressHandler(options));
+      } catch (err) {
+        return errorResult(err);
+      }
+    }
+  );
+
+  server.registerTool(
+    "search_passive_tree_nodes",
+    {
+      title: "Search the passive tree by name",
+      description:
+        "Look up passive tree node ids by (partial, case-insensitive) name, e.g. to turn 'Zealot's Oath' into the " +
+        "hash update_active_build_progress's addPassiveNodeIds needs. Not allocation-aware -- results include any " +
+        "matching node in the full tree dataset, not just ones on the active build.",
+      inputSchema: {
+        query: z.string().min(1).describe("Passive/keystone/notable name or partial name to search for"),
+        limit: z.number().int().min(1).max(50).optional().describe("Max results (default 20)"),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ query, limit }) => {
+      try {
+        return jsonResult(await handlers.searchPassiveTreeNodesHandler(query, limit));
+      } catch (err) {
+        return errorResult(err);
+      }
+    }
+  );
+
+  server.registerTool(
     "get_passive_tree",
     {
       title: "Get passive tree allocation",
@@ -214,6 +276,57 @@ export function registerTools(server: McpServer, log: ClientLogTailer): void {
     async ({ characterName }) => {
       try {
         return jsonResult(await handlers.getPassiveTree(characterName, log));
+      } catch (err) {
+        return errorResult(err);
+      }
+    }
+  );
+
+  server.registerTool(
+    "find_passive_tree_upgrades",
+    {
+      title: "Find nearby passive tree upgrades",
+      description:
+        "Find unallocated notable/keystone passive nodes reachable within a few hops of your currently allocated " +
+        "passives, using the real tree graph (GGG's official PoE2 tree export) rather than guessing layout from " +
+        "memory. Use this to answer 'how can I improve my passive tree' with concrete, verifiable candidates -- " +
+        "reason about which ones fit the build using their real stat text and the character's current class/defenses/offense.",
+      inputSchema: {
+        characterName: z.string().optional().describe("Defaults to the current active character if omitted"),
+        maxHops: z.number().int().min(1).max(4).optional().describe("Graph distance to search out to (default 2)"),
+        limit: z.number().int().min(1).max(50).optional().describe("Max candidates to return (default 25)"),
+        includeMasteries: z.boolean().optional().describe("Also include mastery nodes, not just notables/keystones (default false)"),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    async ({ characterName, maxHops, limit, includeMasteries }) => {
+      try {
+        return jsonResult(await handlers.findPassiveTreeUpgradesHandler(characterName, log, { maxHops, limit, includeMasteries }));
+      } catch (err) {
+        return errorResult(err);
+      }
+    }
+  );
+
+  server.registerTool(
+    "get_skill_setup",
+    {
+      title: "Get current skill and support gem setup",
+      description:
+        "Fetch the character's skill gems and their linked support gems (level/quality/enabled), for reasoning " +
+        "about 'how can I improve my support gems'. Accurate grouping requires an active PoB2/poe.ninja build " +
+        "import (import_pob_build / import_poe_ninja_character); without one, falls back to GGG API's flat gem " +
+        "list with only a name-based support/active guess and no confirmed linkage -- check the 'source' and " +
+        "'note' fields before trusting the grouping. There is no verified support-gem compatibility dataset " +
+        "behind this tool, so recommendations on top of this data are your own game knowledge, not fetched fact.",
+      inputSchema: {
+        characterName: z.string().optional().describe("Defaults to the current active character if omitted"),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    async ({ characterName }) => {
+      try {
+        return jsonResult(await handlers.getSkillSetupHandler(characterName, log));
       } catch (err) {
         return errorResult(err);
       }
