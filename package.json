@@ -30,7 +30,7 @@
   },
   "devDependencies": {
     "@types/node": "24.19.0",
-    "@types/ws": "8.18.1",
+    "@types/ws": "8.18.2",
     "tsx": "4.23.15",
     "typescript": "7.0.2"
   }
